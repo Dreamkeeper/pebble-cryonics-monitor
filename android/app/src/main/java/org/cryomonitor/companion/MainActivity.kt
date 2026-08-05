@@ -1,8 +1,11 @@
 package org.cryomonitor.companion
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
@@ -26,8 +29,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = SettingsStore(this)
-        CmLog.init(this)
-        startForegroundService(Intent(this, MonitorService::class.java))
+        requestPermissionsThenStartService()
 
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -122,4 +124,55 @@ class MainActivity : Activity() {
 
         setContentView(ScrollView(this).apply { addView(col) })
     }
+
+    /**
+     * BLUETOOTH_CONNECT must be granted before the monitoring service can
+     * hold a connectedDevice foreground service on Android 14+; the rest
+     * are needed for notifications, alarm location, and SMS fallback.
+     * The service starts after the dialog either way — it has typed
+     * fallbacks — but granting everything is the supported path.
+     */
+    private fun requestPermissionsThenStartService() {
+        val wanted = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= 31) wanted += Manifest.permission.BLUETOOTH_CONNECT
+        if (Build.VERSION.SDK_INT >= 33) wanted += Manifest.permission.POST_NOTIFICATIONS
+        wanted += Manifest.permission.ACCESS_FINE_LOCATION
+        wanted += Manifest.permission.SEND_SMS   // sideload flavor escalation
+        val missing = wanted.filter {
+            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            startMonitorService()
+        } else {
+            CmLog.i("MainActivity", "requesting permissions: $missing")
+            requestPermissions(missing.toTypedArray(), REQ_PERMS)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_PERMS) {
+            val denied = permissions.filterIndexed { i, _ ->
+                grantResults.getOrNull(i) != PackageManager.PERMISSION_GRANTED }
+            if (denied.isNotEmpty()) {
+                CmLog.w("MainActivity", "permissions denied: $denied")
+                Toast.makeText(this,
+                    "Denied: ${denied.joinToString()} — monitoring will run degraded",
+                    Toast.LENGTH_LONG).show()
+            }
+            startMonitorService()
+        }
+    }
+
+    private fun startMonitorService() {
+        try {
+            startForegroundService(Intent(this, MonitorService::class.java))
+        } catch (e: Exception) {
+            CmLog.e("MainActivity", "failed to start MonitorService", e)
+            Toast.makeText(this, "Service start failed: $e", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private companion object { const val REQ_PERMS = 41 }
 }

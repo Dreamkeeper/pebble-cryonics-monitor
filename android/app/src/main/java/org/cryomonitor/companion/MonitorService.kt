@@ -5,7 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.BatteryManager
+import android.os.Build
 import android.os.IBinder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +43,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
         server = ServerClient(settings)
         escalator = Escalator(this, settings)
         CmLog.i(TAG, "service starting, server=${settings.serverUrl.isNotEmpty()}")
-        startForeground(NOTIF_ID, buildNotification("Starting…"))
+        startForegroundSafely(buildNotification("Starting…"))
 
         transport = PebbleTransport(context = this, listener = this)
         transport.start()
@@ -49,6 +51,38 @@ class MonitorService : Service(), PebbleTransport.Listener {
 
         scope.launch { watchdogLoop() }
         scope.launch { serverHeartbeatLoop() }
+    }
+
+    /**
+     * Android 14+ enforces per-type prerequisites for foreground services:
+     * connectedDevice requires a granted Bluetooth permission. If the user
+     * hasn't granted BLUETOOTH_CONNECT yet, fall back to specialUse, then to
+     * the untyped legacy call — a life-safety service must never crash the
+     * app because a permission dialog hasn't been answered yet.
+     */
+    private fun startForegroundSafely(n: Notification) {
+        if (Build.VERSION.SDK_INT < 34) {
+            startForeground(NOTIF_ID, n)
+            return
+        }
+        val attempts = listOf(
+            "connectedDevice" to ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            "specialUse" to ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        for ((name, type) in attempts) {
+            try {
+                startForeground(NOTIF_ID, n, type)
+                CmLog.i(TAG, "foreground started with type=$name")
+                return
+            } catch (e: Exception) {
+                CmLog.w(TAG, "startForeground($name) failed: $e")
+            }
+        }
+        try {
+            startForeground(NOTIF_ID, n)
+            CmLog.w(TAG, "foreground started untyped (legacy fallback)")
+        } catch (e: Exception) {
+            CmLog.e(TAG, "all startForeground attempts failed — running degraded", e)
+        }
     }
 
     // ---- PebbleTransport.Listener ----

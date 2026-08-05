@@ -4,6 +4,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Required prerequisite for the connectedDevice FGS type on Android 14+ -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Fallback FGS type if BLUETOOTH_CONNECT is not (yet) granted -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -15,13 +19,18 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
 
     <application
+        android:name=".CmApp"
         android:label="Cryonics Monitor"
         android:theme="@style/Theme.AppCompat.DayNight">
 
         <service
             android:name=".MonitorService"
-            android:foregroundServiceType="connectedDevice"
-            android:exported="false" />
+            android:foregroundServiceType="connectedDevice|specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Life-safety monitor: maintains the Bluetooth watch link and escalates unresponsiveness alarms" />
+        </service>
 
         <activity
             android:name=".MainActivity"

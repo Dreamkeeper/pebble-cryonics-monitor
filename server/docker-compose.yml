@@ -1,0 +1,26 @@
+# Self-hosted deployment: VPS, NAS or home server.
+#   cp .env.example .env   # set CM_API_TOKEN, Telegram bot token, SMTP creds
+#   docker compose up -d
+services:
+  monitor:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      CM_API_TOKEN: ${CM_API_TOKEN:?set a strong token}
+      CM_TELEGRAM_BOT_TOKEN: ${CM_TELEGRAM_BOT_TOKEN:-}
+      CM_SMTP_HOST: ${CM_SMTP_HOST:-}
+      CM_NTFY_URL: ${CM_NTFY_URL:-https://ntfy.sh}
+    volumes:
+      - ./data:/srv/data
+
+  # Optional self-hosted push server (contacts subscribe to their topic)
+  ntfy:
+    image: binwiederhier/ntfy
+    command: serve
+    restart: unless-stopped
+    ports:
+      - "8090:80"
+    volumes:
+      - ./data/ntfy:/var/lib/ntfy

@@ -38,4 +38,9 @@ class SettingsStore(context: Context) {
     var wearerName: String
         get() = p.getString("wearer_name", "the wearer") ?: "the wearer"
         set(v) = p.edit().putString("wearer_name", v).apply()
+
+    /** Extensive debug logging (phone ring/file log + watch APP_LOG). */
+    var debugLogging: Boolean
+        get() = p.getBoolean("debug_logging", false)
+        set(v) = p.edit().putBoolean("debug_logging", v).apply()
 }

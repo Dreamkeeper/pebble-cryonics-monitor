@@ -10,6 +10,11 @@
 #include "../core/detectors.h"
 #include "../core/protocol.h"
 
+static uint8_t s_debug;
+#define DLOG(...) do { \
+    if (s_debug) APP_LOG(APP_LOG_LEVEL_DEBUG, __VA_ARGS__); \
+  } while (0)
+
 static Window *s_main_window;
 static TextLayer *s_status_layer;
 static TextLayer *s_detail_layer;
@@ -38,12 +43,27 @@ static void send_to_phone(uint8_t msg_type, const cm_action *a) {
   dict_write_uint8(out, MESSAGE_KEY_WATCH_BATTERY,
                    battery_state_service_peek().charge_percent);
   app_message_outbox_send();
+  DLOG("tx pmsg=%u det=%u", msg_type, a ? a->detector : 0);
+}
+
+static void set_debug(uint8_t on) {
+  s_debug = on;
+  persist_write_int(PK_DEBUG, on);
+  AppWorkerMessage m = {.data0 = on};
+  app_worker_send_message(WMSG_SET_DEBUG, &m);
+  APP_LOG(APP_LOG_LEVEL_INFO, "debug %s", on ? "ON" : "off");
 }
 
 static void inbox_received(DictionaryIterator *iter, void *context) {
   Tuple *t = dict_find(iter, MESSAGE_KEY_MSG_TYPE);
   if (!t) return;
+  DLOG("rx pmsg=%u", t->value->uint8);
   switch (t->value->uint8) {
+    case PMSG_SET_DEBUG: {
+      Tuple *v = dict_find(iter, MESSAGE_KEY_SECONDS);
+      set_debug(v && v->value->uint16 ? 1 : 0);
+      break;
+    }
     case PMSG_CONFIG: {
       Tuple *blob = dict_find(iter, MESSAGE_KEY_CFG_BLOB);
       if (blob && blob->length == sizeof(cm_config)) {
@@ -165,6 +185,7 @@ static void show_alert(const cm_action *a) {
 }
 
 static void handle_action(const cm_action *a) {
+  DLOG("handle_action type=%u det=%u sec=%u", a->type, a->detector, a->seconds);
   switch (a->type) {
     case CM_ACT_CHECKIN_START:
     case CM_ACT_COUNTDOWN_START:
@@ -206,8 +227,8 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
     persist_delete(PK_PENDING_ACTION); /* we got it live */
     handle_action(&a);
   } else if (type == WMSG_STATUS) {
-    snprintf(s_detail_buf, sizeof(s_detail_buf), "stage %u  susp %u min",
-             (unsigned)m->data0, (unsigned)m->data2);
+    snprintf(s_detail_buf, sizeof(s_detail_buf), "stage %u  susp %u min%s",
+             (unsigned)m->data0, (unsigned)m->data2, s_debug ? "  DBG" : "");
     text_layer_set_text(s_detail_layer, s_detail_buf);
   }
 }
@@ -296,6 +317,7 @@ static void ensure_worker_running(void) {
 }
 
 static void init(void) {
+  s_debug = persist_exists(PK_DEBUG) ? (uint8_t)persist_read_int(PK_DEBUG) : 0;
   s_main_window = window_create();
   window_set_click_config_provider(s_main_window, main_click_config);
   window_set_window_handlers(s_main_window, (WindowHandlers){

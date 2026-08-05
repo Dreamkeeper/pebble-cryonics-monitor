@@ -10,6 +10,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 
@@ -25,6 +26,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = SettingsStore(this)
+        CmLog.init(this)
         startForegroundService(Intent(this, MonitorService::class.java))
 
         val col = LinearLayout(this).apply {
@@ -82,6 +84,28 @@ class MainActivity : Activity() {
                         Uri.parse("package:$packageName")))
                 } else Toast.makeText(this@MainActivity,
                     "Already exempt", Toast.LENGTH_SHORT).show()
+            }
+        })
+
+        @Suppress("UseSwitchCompatOrMaterialCode")
+        col.addView(Switch(this).apply {
+            text = "Debug mode (extensive logs, phone + watch)"
+            isChecked = settings.debugLogging
+            setOnCheckedChangeListener { _, on ->
+                settings.debugLogging = on
+                startService(Intent(this@MainActivity, MonitorService::class.java)
+                    .setAction(MonitorService.ACTION_SET_DEBUG)
+                    .putExtra("enabled", on))
+                Toast.makeText(this@MainActivity,
+                    if (on) "Debug logging ON (watch too)" else "Debug logging off",
+                    Toast.LENGTH_SHORT).show()
+            }
+        })
+
+        col.addView(Button(this).apply {
+            text = "View logs"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, LogActivity::class.java))
             }
         })
 

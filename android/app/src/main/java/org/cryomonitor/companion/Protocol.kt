@@ -16,6 +16,7 @@ object Protocol {
     const val PMSG_CONFIG = 6
     const val PMSG_CONFIG_ACK = 7
     const val PMSG_USER_OK_REMOTE = 8
+    const val PMSG_SET_DEBUG = 9
 
     // Detectors (mirrors cm_detector)
     val DETECTOR_NAMES = listOf(

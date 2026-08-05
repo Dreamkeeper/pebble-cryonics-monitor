@@ -63,14 +63,20 @@ class ServerClient(private val settings: SettingsStore) {
     private fun postForBody(path: String, body: JSONObject): String? {
         if (!configured) return null
         body.put("token", settings.apiToken)
-        return runCatching {
+        val result = runCatching {
             http.newCall(
                 Request.Builder()
                     .url(settings.serverUrl + path)
                     .post(body.toString()
                         .toRequestBody("application/json".toMediaType()))
                     .build())
-                .execute().use { r -> if (r.isSuccessful) r.body?.string() else null }
-        }.getOrNull()
+                .execute().use { r ->
+                    CmLog.d(TAG, "POST $path -> ${r.code}")
+                    if (r.isSuccessful) r.body?.string() else null
+                }
+        }.onFailure { CmLog.d(TAG, "POST $path failed: $it") }
+        return result.getOrNull()
     }
+
+    private companion object { const val TAG = "ServerClient" }
 }

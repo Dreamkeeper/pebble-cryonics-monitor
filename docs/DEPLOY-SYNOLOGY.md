@@ -71,6 +71,36 @@ escalation messages arrive and the dashboard
 - DSM auto-update: keep minor updates on; Container Manager projects
   survive DSM restarts.
 
+## Debug logging
+
+The server's debug mode is controlled by one environment variable — no
+rebuild needed:
+
+1. Edit `/volume1/docker/cryomonitor/.env` and set `CM_LOG_LEVEL=DEBUG`.
+2. Container Manager → Project → `cryomonitor` → **Action → Build/Restart**
+   (or `docker compose up -d` over SSH). Set back to `INFO` when done —
+   DEBUG logs every phone heartbeat.
+
+**Viewing logs** (three options):
+- Container Manager → **Container** → `cryomonitor-monitor-1` → **Logs**
+  tab — live view, filterable, exportable from DSM.
+- SSH: `docker compose -f /volume1/docker/cryomonitor/docker-compose.yml logs -f monitor`
+- The in-app event log survives at `GET /api/v1/status` (`recent_events`)
+  regardless of log level — alarms, sends, ACKs, dead-man transitions.
+
+What each level shows: `INFO` = events that matter (alarms, escalation
+sends, ACKs, dead-man transitions, config changes). `DEBUG` = adds every
+heartbeat with battery/watch-age payloads and per-cycle escalation
+evaluation — use it when diagnosing a specific incident, not permanently
+(log volume, and DSM rotates container logs by size).
+
+Companion pieces: the Android app has a **Debug mode** switch in settings
+(extensive logs to a ring buffer + daily file, viewable/shareable via
+**View logs** in the app; files under
+`Android/data/org.cryomonitor.companion/files/logs/`). The same switch
+pushes the toggle to the watch, whose debug output is readable with
+`pebble logs` over the developer connection.
+
 ## Notes
 
 - Data is currently in-memory (v0.1 scaffold); SQLite persistence lands in

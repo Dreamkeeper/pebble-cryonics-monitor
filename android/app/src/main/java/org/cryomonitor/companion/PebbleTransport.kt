@@ -36,10 +36,17 @@ class PebbleTransport(
                     val tid = intent.getIntExtra("transaction_id", -1)
                     ack(tid)
                     val json = intent.getStringExtra("msg_data") ?: return
+                    CmLog.d(TAG, "rx tid=$tid $json")
                     listener.onAppMessage(parseDict(json))
                 }
-                INTENT_PEBBLE_CONNECTED -> listener.onConnectionChanged(true)
-                INTENT_PEBBLE_DISCONNECTED -> listener.onConnectionChanged(false)
+                INTENT_PEBBLE_CONNECTED -> {
+                    CmLog.i(TAG, "pebble connected")
+                    listener.onConnectionChanged(true)
+                }
+                INTENT_PEBBLE_DISCONNECTED -> {
+                    CmLog.i(TAG, "pebble disconnected")
+                    listener.onConnectionChanged(false)
+                }
             }
         }
     }
@@ -82,6 +89,7 @@ class PebbleTransport(
             arr.put(o)
         }
         txId = (txId + 1) and 0xff
+        CmLog.d(TAG, "tx tid=$txId $arr")
         context.sendBroadcast(Intent(INTENT_APP_SEND).apply {
             putExtra("uuid", uuid)
             putExtra("transaction_id", txId)
@@ -112,6 +120,7 @@ class PebbleTransport(
     }
 
     companion object {
+        private const val TAG = "PebbleTransport"
         const val INTENT_APP_SEND = "com.getpebble.action.app.SEND"
         const val INTENT_APP_RECEIVE = "com.getpebble.action.app.RECEIVE"
         const val INTENT_APP_RECEIVE_ACK = "com.getpebble.action.app.RECEIVE_ACK"

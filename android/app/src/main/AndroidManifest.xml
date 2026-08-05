@@ -38,5 +38,9 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:launchMode="singleInstance" />
+
+        <activity
+            android:name=".LogActivity"
+            android:exported="false" />
     </application>
 </manifest>

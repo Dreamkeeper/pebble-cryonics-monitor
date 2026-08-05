@@ -7,7 +7,6 @@ import android.app.Service
 import android.content.Intent
 import android.os.BatteryManager
 import android.os.IBinder
-import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,8 +37,10 @@ class MonitorService : Service(), PebbleTransport.Listener {
     override fun onCreate() {
         super.onCreate()
         settings = SettingsStore(this)
+        CmLog.init(this)
         server = ServerClient(settings)
         escalator = Escalator(this, settings)
+        CmLog.i(TAG, "service starting, server=${settings.serverUrl.isNotEmpty()}")
         startForeground(NOTIF_ID, buildNotification("Starting…"))
 
         transport = PebbleTransport(context = this, listener = this)
@@ -58,21 +59,32 @@ class MonitorService : Service(), PebbleTransport.Listener {
         (data[PebbleTransport.KEY_WATCH_BATTERY] as? Int)?.let { watchBattery = it }
 
         when (data[PebbleTransport.KEY_MSG_TYPE] as? Int) {
-            Protocol.PMSG_HEARTBEAT -> updateNotification()
+            Protocol.PMSG_HEARTBEAT -> {
+                CmLog.d(TAG, "watch heartbeat seq=${data[PebbleTransport.KEY_HEARTBEAT_SEQ]} " +
+                    "batt=$watchBattery")
+                updateNotification()
+            }
             Protocol.PMSG_PRE_ALARM -> {
                 val det = detectorName(data)
+                CmLog.i(TAG, "PRE-ALARM from watch: $det")
                 AlarmActivity.launch(this, det, preAlarm = true)
             }
             Protocol.PMSG_ALARM -> {
                 val det = detectorName(data)
+                CmLog.i(TAG, "ALARM from watch: $det")
                 AlarmActivity.launch(this, det, preAlarm = false)
                 scope.launch { escalate(det) }
             }
             Protocol.PMSG_CANCEL -> {
+                CmLog.i(TAG, "watch cancelled alert (reason=" +
+                    "${data[PebbleTransport.KEY_CANCEL_REASON]})")
                 sendBroadcast(Intent(ACTION_ALERT_CANCELLED).setPackage(packageName))
                 scope.launch { retract("cancelled_on_watch") }
             }
-            Protocol.PMSG_SUSPENDED -> updateNotification()
+            Protocol.PMSG_SUSPENDED -> {
+                CmLog.i(TAG, "suspension state change from watch")
+                updateNotification()
+            }
         }
     }
 
@@ -93,6 +105,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
         val kind = if (isTest) "test" else "watch_alarm"
         val loc = escalator.lastKnownLocation()
         val escId = server.alarm(detector, kind, loc?.first, loc?.second)
+        CmLog.i(TAG, "escalate det=$detector test=$isTest loc=$loc serverEsc=$escId")
         activeEscalationId = escId
         serverReachable = escId != null
         // SMS fires regardless (redundant path); Telegram-direct only when
@@ -102,6 +115,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     }
 
     private fun retract(reason: String) {
+        CmLog.i(TAG, "retract: $reason (esc=$activeEscalationId)")
         activeEscalationId?.let { server.resolve(it, "false_alarm") }
         activeEscalationId = null
         escalator.cancel(reason)
@@ -115,6 +129,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
             if (lastWatchDataT > 0 && silentFor > Protocol.WATCH_SILENT_AFTER_S &&
                 !faultNotified) {
                 faultNotified = true
+                CmLog.w(TAG, "watch watchdog: silent ${silentFor}s connected=$watchConnected")
                 notifyFault(
                     if (watchConnected)
                         "Watch connected but silent ${silentFor}s — worker evicted? " +
@@ -137,12 +152,14 @@ class MonitorService : Service(), PebbleTransport.Listener {
                           else ((System.currentTimeMillis() - lastWatchDataT) / 1000).toInt()
                 val ok = server.heartbeat(pct, watchBattery, age,
                                           lowBatteryWarning = pct in 1..15)
+                CmLog.d(TAG, "server heartbeat ok=$ok phoneBatt=$pct watchAge=$age")
                 if (!ok && serverReachable) {
                     serverReachable = false
+                    CmLog.w(TAG, "server unreachable")
                     notifyFault("Server unreachable — phone-direct escalation active.")
                 } else if (ok && !serverReachable) {
                     serverReachable = true
-                    Log.i(TAG, "server back")
+                    CmLog.i(TAG, "server reachable again")
                 }
             }
             delay(300_000)
@@ -158,7 +175,19 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_USER_OK_REMOTE))
                 scope.launch { retract(intent.getStringExtra("cause") ?: "cancelled_on_phone") }
             }
-            ACTION_TEST_ALARM -> scope.launch { escalate("test", isTest = true) }
+            ACTION_TEST_ALARM -> {
+                CmLog.i(TAG, "fire-drill TEST alarm requested")
+                scope.launch { escalate("test", isTest = true) }
+            }
+            ACTION_SET_DEBUG -> {
+                val on = intent.getBooleanExtra("enabled", false)
+                CmLog.debugEnabled = on
+                CmLog.i(TAG, "debug logging ${if (on) "ENABLED" else "disabled"} " +
+                    "(pushing to watch)")
+                transport.send(mapOf(
+                    PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_SET_DEBUG,
+                    PebbleTransport.KEY_SECONDS to (if (on) 1 else 0)))
+            }
         }
         return START_STICKY
     }
@@ -223,5 +252,6 @@ class MonitorService : Service(), PebbleTransport.Listener {
         const val ACTION_USER_CANCEL = "org.cryomonitor.USER_CANCEL"
         const val ACTION_TEST_ALARM = "org.cryomonitor.TEST_ALARM"
         const val ACTION_ALERT_CANCELLED = "org.cryomonitor.ALERT_CANCELLED"
+        const val ACTION_SET_DEBUG = "org.cryomonitor.SET_DEBUG"
     }
 }

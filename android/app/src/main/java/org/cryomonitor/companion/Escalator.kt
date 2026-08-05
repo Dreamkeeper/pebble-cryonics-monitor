@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.location.LocationManager
 import android.telephony.SmsManager
-import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -51,10 +50,11 @@ class Escalator(private val context: Context, private val settings: SettingsStor
             try {
                 sms.sendMultipartTextMessage(
                     number, null, sms.divideMessage(text), null, null)
+                CmLog.i(TAG, "SMS sent to $number (${text.length} chars)")
             } catch (e: SecurityException) {
-                Log.w(TAG, "SMS not permitted (play flavor?): $e")
+                CmLog.w(TAG, "SMS not permitted (play flavor?): $e")
             } catch (e: Exception) {
-                Log.e(TAG, "SMS to $number failed", e)
+                CmLog.e(TAG, "SMS to $number failed", e)
             }
         }
     }
@@ -69,8 +69,10 @@ class Escalator(private val context: Context, private val settings: SettingsStor
                     .url("https://api.telegram.org/bot$token/sendMessage")
                     .post(body.toString()
                         .toRequestBody("application/json".toMediaType()))
-                    .build()).execute().close()
-            }.onFailure { Log.e(TAG, "Telegram to $chatId failed", it) }
+                    .build()).execute().use {
+                        CmLog.i(TAG, "Telegram to $chatId -> ${it.code}")
+                    }
+            }.onFailure { CmLog.e(TAG, "Telegram to $chatId failed", it) }
         }
     }
 

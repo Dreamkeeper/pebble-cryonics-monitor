@@ -18,6 +18,34 @@ static uint8_t s_hr_burst_active;
 static uint16_t s_heartbeat_countdown = CM_HEARTBEAT_INTERVAL_S;
 static DataLoggingSessionRef s_log_session;
 
+/* ---- debug mode (toggled from the phone; view with `pebble logs`) ---- */
+static uint8_t s_debug;
+static uint16_t s_dbg_motion_events;   /* per-minute counters */
+static uint16_t s_dbg_last_mag;
+static uint16_t s_dbg_last_bpm;
+static uint16_t s_dbg_hr_updates;
+
+#define DLOG(...) do { \
+    if (s_debug) APP_LOG(APP_LOG_LEVEL_DEBUG, __VA_ARGS__); \
+  } while (0)
+
+static const char *action_name(uint8_t t) {
+  switch (t) {
+    case CM_ACT_HR_BURST_ON:      return "HR_BURST_ON";
+    case CM_ACT_HR_BURST_OFF:     return "HR_BURST_OFF";
+    case CM_ACT_CHECKIN_START:    return "CHECKIN_START";
+    case CM_ACT_COUNTDOWN_START:  return "COUNTDOWN_START";
+    case CM_ACT_ALERT_CANCELLED:  return "ALERT_CANCELLED";
+    case CM_ACT_ALARM:            return "ALARM";
+    case CM_ACT_NOTWORN_NAG:      return "NOTWORN_NAG";
+    case CM_ACT_CHECKIN_REMINDER: return "CHECKIN_REMINDER";
+    case CM_ACT_SUSPEND_STARTED:  return "SUSPEND_STARTED";
+    case CM_ACT_SUSPEND_EXPIRED:  return "SUSPEND_EXPIRED";
+    case CM_ACT_AUTO_RESUMED:     return "AUTO_RESUMED";
+    default:                      return "?";
+  }
+}
+
 /* Heartbeat record for DataLogging (phone-side watchdog + audit trail). */
 typedef struct __attribute__((packed)) {
   uint32_t epoch_s;
@@ -64,6 +92,8 @@ static void set_hr_burst(bool on) {
 static void drain_actions(void) {
   cm_action a;
   while (cm_next_action(&s_core, &a)) {
+    DLOG("act %s det=%u sec=%u reason=%u",
+         action_name(a.type), a.detector, a.seconds, a.reason);
     switch (a.type) {
       case CM_ACT_HR_BURST_ON:  set_hr_burst(true);  break;
       case CM_ACT_HR_BURST_OFF: set_hr_burst(false); break;
@@ -97,7 +127,12 @@ static void accel_handler(AccelData *data, uint32_t num_samples) {
     s[i].z = data[i].z;
     s[i].did_vibrate = data[i].did_vibrate ? 1 : 0;
   }
+  uint32_t motion_before = s_core.last_motion_ms;
   cm_accel_feed(&s_core, s, n, now_ms());
+  if (s_debug) {
+    if (s_core.last_motion_ms != motion_before) s_dbg_motion_events++;
+    s_dbg_last_mag = s_core.prev_mag;
+  }
   drain_actions();
 }
 
@@ -105,6 +140,11 @@ static void accel_handler(AccelData *data, uint32_t num_samples) {
 static void health_handler(HealthEventType event, void *context) {
   if (event == HealthEventHeartRateUpdate || event == HealthEventSignificantUpdate) {
     HealthValue bpm = health_service_peek_current_value(HealthMetricHeartRateRawBPM);
+    if (s_debug) {
+      s_dbg_hr_updates++;
+      s_dbg_last_bpm = bpm > 0 ? (uint16_t)bpm : 0;
+      DLOG("hr raw=%d burst=%u", (int)bpm, s_hr_burst_active);
+    }
     cm_hr_feed(&s_core, bpm > 0 ? (uint16_t)bpm : 0, now_ms());
     drain_actions();
   }
@@ -129,6 +169,14 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   if (--s_heartbeat_countdown == 0) {
     s_heartbeat_countdown = CM_HEARTBEAT_INTERVAL_S;
     log_heartbeat();
+    if (s_debug) {
+      DLOG("min: stage=%u susp=%u motion_evts=%u mag=%u bpm=%u hr_upd=%u heap_free=%u",
+           (unsigned)cm_current_stage(&s_core), s_core.suspended,
+           s_dbg_motion_events, s_dbg_last_mag, s_dbg_last_bpm,
+           s_dbg_hr_updates, (unsigned)heap_bytes_free());
+      s_dbg_motion_events = 0;
+      s_dbg_hr_updates = 0;
+    }
   }
 }
 
@@ -143,8 +191,14 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
     case WMSG_RESUME: cm_resume(&s_core, now_ms()); break;
     case WMSG_SOS: cm_manual_sos(&s_core, now_ms()); break;
     case WMSG_STATUS_REQ: push_status_to_app(); break;
+    case WMSG_SET_DEBUG:
+      s_debug = (uint8_t)m->data0;
+      persist_write_int(PK_DEBUG, s_debug);
+      APP_LOG(APP_LOG_LEVEL_INFO, "worker debug %s", s_debug ? "ON" : "off");
+      break;
     default: break;
   }
+  DLOG("wmsg type=%u d0=%u", type, m->data0);
   drain_actions();
 }
 
@@ -179,6 +233,12 @@ static void init(void) {
   cm_config cfg;
   load_config(&cfg);
   cm_init(&s_core, &cfg, now_ms());
+  s_debug = persist_exists(PK_DEBUG) ? (uint8_t)persist_read_int(PK_DEBUG) : 0;
+  if (s_debug) {
+    APP_LOG(APP_LOG_LEVEL_INFO,
+            "worker up (debug ON) hr=%u heap_free=%u",
+            cfg.hr_available, (unsigned)heap_bytes_free());
+  }
   restore_suspension();
 
   accel_service_set_sampling_rate(ACCEL_SAMPLING_25HZ);

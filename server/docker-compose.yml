@@ -12,6 +12,8 @@ services:
       CM_TELEGRAM_BOT_TOKEN: ${CM_TELEGRAM_BOT_TOKEN:-}
       CM_SMTP_HOST: ${CM_SMTP_HOST:-}
       CM_NTFY_URL: ${CM_NTFY_URL:-https://ntfy.sh}
+      # Debug mode: set to DEBUG in .env for extensive logs
+      CM_LOG_LEVEL: ${CM_LOG_LEVEL:-INFO}
     volumes:
       - ./data:/srv/data
 

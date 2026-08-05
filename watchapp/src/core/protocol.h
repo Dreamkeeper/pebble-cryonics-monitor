@@ -12,7 +12,8 @@ enum {
   PK_PENDING_ACTION = 2,  /* cm_action awaiting foreground app pickup */
   PK_MODE = 3,            /* 0 = worker mode, 1 = persistent foreground mode */
   PK_SUSPEND_UNTIL = 4,   /* epoch seconds; survives worker restart */
-  PK_SUSPEND_AUTORESUME = 5
+  PK_SUSPEND_AUTORESUME = 5,
+  PK_DEBUG = 6            /* 1 = extensive APP_LOG output (app + worker) */
 };
 
 /* AppWorkerMessage types (uint8). data0/data1/data2 per type. */
@@ -23,7 +24,8 @@ enum {
   WMSG_RESUME = 4,        /* app->worker */
   WMSG_SOS = 5,           /* app->worker */
   WMSG_STATUS_REQ = 6,    /* app->worker: request status push */
-  WMSG_STATUS = 7         /* worker->app: data0=stage, data1=last_bpm, data2=suspend_remaining_min */
+  WMSG_STATUS = 7,        /* worker->app: data0=stage, data1=last_bpm, data2=suspend_remaining_min */
+  WMSG_SET_DEBUG = 8      /* app->worker: data0 = 0/1 */
 };
 
 /* MSG_TYPE values for AppMessage to/from the phone. */
@@ -35,7 +37,8 @@ enum {
   PMSG_SUSPENDED = 5,     /* watch->phone: suspension state changed */
   PMSG_CONFIG = 6,        /* phone->watch: cm_config blob push */
   PMSG_CONFIG_ACK = 7,    /* watch->phone */
-  PMSG_USER_OK_REMOTE = 8 /* phone->watch: user cancelled on the phone */
+  PMSG_USER_OK_REMOTE = 8,/* phone->watch: user cancelled on the phone */
+  PMSG_SET_DEBUG = 9      /* phone->watch: SECONDS key carries 0/1 */
 };
 
 /* Heartbeat cadence (watch -> phone) while connected. */

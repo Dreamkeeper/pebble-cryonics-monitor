@@ -7,6 +7,7 @@ callback webhook, OwnTracks/Dawarich liveness probe, fire-drill scheduler.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import secrets
 import time
@@ -16,6 +17,12 @@ from pydantic import BaseModel
 
 from .deadman import DeadmanConfig, DeadmanMonitor, PhoneState
 from .escalation import AlertKind, Contact, Escalation, Tier
+
+# Debug mode: set CM_LOG_LEVEL=DEBUG in the environment (.env on Synology).
+logging.basicConfig(
+    level=os.environ.get("CM_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+log = logging.getLogger("cryomonitor")
 
 app = FastAPI(title="Pebble Cryonics Monitor Server", version="0.1.0")
 
@@ -43,6 +50,7 @@ def default_tiers() -> list[Tier]:
 
 def log_event(kind: str, **data) -> None:
     event_log.append({"t": time.time(), "kind": kind, **data})
+    log.info("event %s %s", kind, data)
 
 
 class HeartbeatIn(BaseModel):
@@ -79,8 +87,10 @@ def heartbeat(hb: HeartbeatIn):
     deadman.heartbeat(t, hb.phone_battery_pct)
     if hb.low_battery_warning:
         deadman.low_battery_notice(t)
-    log_event("heartbeat", battery=hb.phone_battery_pct,
-              watch_age=hb.watch_data_age_s)
+    # heartbeats are chatter, not events: debug level only
+    log.debug("heartbeat battery=%s watch_batt=%s watch_age=%s suspended=%s low_batt=%s",
+              hb.phone_battery_pct, hb.watch_battery_pct, hb.watch_data_age_s,
+              hb.suspended_until, hb.low_battery_warning)
     return {"state": deadman.state.value, "server_time": t}
 
 
@@ -156,6 +166,9 @@ async def escalation_pump():
         t = time.time()
         prev = deadman.state
         state = deadman.evaluate(t)
+        if state != prev:
+            log.info("deadman transition %s -> %s (last_hb=%s)",
+                     prev.value, state.value, deadman.last_heartbeat_t)
         if state == PhoneState.SILENT and prev != PhoneState.SILENT:
             esc_id = f"esc-{int(t)}-phone-silent"
             active_escalations[esc_id] = Escalation(

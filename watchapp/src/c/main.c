@@ -154,6 +154,7 @@ static void show_alert(const cm_action *a) {
   }
   if (!s_alert_window) {
     s_alert_window = window_create();
+    window_set_click_config_provider(s_alert_window, alert_click_config);
     window_set_window_handlers(s_alert_window, (WindowHandlers){
         .load = alert_window_load, .unload = alert_window_unload});
     window_stack_push(s_alert_window, true);
@@ -270,6 +271,23 @@ static void main_window_unload(Window *w) {
   text_layer_destroy(s_detail_layer);
 }
 
+/* While the app is open it heartbeats the phone directly. (In worker mode
+ * with the app closed, phone-side liveness relies on DataLogging records +
+ * BT connection events — documented v0.1 limitation.) */
+static void app_tick(struct tm *tick_time, TimeUnits changed) {
+  static uint16_t s_hb_seq = 0;
+  if (tick_time->tm_sec == 0) { /* once a minute */
+    DictionaryIterator *out;
+    if (app_message_outbox_begin(&out) == APP_MSG_OK) {
+      dict_write_uint8(out, MESSAGE_KEY_MSG_TYPE, PMSG_HEARTBEAT);
+      dict_write_uint16(out, MESSAGE_KEY_HEARTBEAT_SEQ, ++s_hb_seq);
+      dict_write_uint8(out, MESSAGE_KEY_WATCH_BATTERY,
+                       battery_state_service_peek().charge_percent);
+      app_message_outbox_send();
+    }
+  }
+}
+
 static void ensure_worker_running(void) {
   if (!app_worker_is_running()) {
     AppWorkerResult r = app_worker_launch();
@@ -288,6 +306,7 @@ static void init(void) {
   app_message_open(256, 256);
 
   app_worker_message_subscribe(worker_message_handler);
+  tick_timer_service_subscribe(SECOND_UNIT, app_tick);
   ensure_worker_running();
 
   /* Launched by the worker? Pick up the parked action immediately. */

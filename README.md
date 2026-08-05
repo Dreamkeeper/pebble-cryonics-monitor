@@ -41,9 +41,41 @@ never auto-dials them.
 
 ## Status
 
-Pre-alpha. Currently: detector core + scaffolding. See
+**v0.1 pre-alpha** — builds end-to-end, on-hardware validation pending. See
 [docs/M0-SPIKES.md](docs/M0-SPIKES.md) for the feasibility gates that must
 pass on real hardware before the architecture is final.
+
+## Building
+
+**Watchapp** (pebble-tool 5.x + SDK 4.9.169+, Linux/WSL):
+
+```bash
+cd watchapp && pebble build     # -> build/watchapp.pbw (emery/diorite/flint/gabbro)
+```
+
+Install: sideload `build/watchapp.pbw` via the Pebble/Core mobile app or
+Rebble Sideload Helper.
+
+**Android companion** (JDK 17 + Android SDK 35):
+
+```bash
+cd android && gradle assembleSideloadDebug
+# -> app/build/outputs/apk/sideload/debug/app-sideload-debug.apk
+```
+
+The `sideload` flavor includes SMS fallback escalation; the `play` flavor
+omits SMS/call permissions for Play Store compliance.
+
+**Server** (Docker; see [docs/DEPLOY-SYNOLOGY.md](docs/DEPLOY-SYNOLOGY.md)
+for Synology Container Manager):
+
+```bash
+cd server && cp .env.example .env   # set CM_API_TOKEN etc.
+docker compose up -d --build        # API on :8080, ntfy on :8090
+```
+
+Tests: `watchapp/tests` (host C, MSVC/gcc — 80 checks) and
+`server/tests` (pytest — 17 checks).
 
 ## License
 

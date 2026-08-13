@@ -16,7 +16,11 @@
       "watchface": false
     },
     "companionApp": {
-      "android": "org.cryomonitor.companion"
+      "android": {
+        "apps": [
+          { "package": "org.cryomonitor.companion" }
+        ]
+      }
     },
     "messageKeys": {
       "MSG_TYPE": 1,

@@ -1,0 +1,112 @@
+package org.cryomonitor.companion
+
+import android.content.Context
+import io.rebble.pebblekit2.client.DefaultPebbleSender
+import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
+import io.rebble.pebblekit2.common.model.TransmissionResult
+import io.rebble.pebblekit2.common.model.WatchIdentifier
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import java.util.UUID
+
+/**
+ * Unified watch link: PebbleKit2 (primary, Core app >= 1.0.7.7) with
+ * automatic fallback to the PebbleKit Classic broadcast transport for
+ * older phone apps.
+ *
+ * Outbound: try PK2; on results that indicate "the phone app doesn't do
+ * PK2" (no permission / unknown / exception) fall back to Classic
+ * broadcasts. Watch-state results (not connected, NACK, timeout) are
+ * authoritative and NOT retried over Classic — the watch is simply
+ * unreachable.
+ *
+ * Inbound: both the PK2 listener service (via [Pk2Bus]) and the Classic
+ * receiver deliver into the same [PebbleTransport.Listener].
+ */
+class WatchLink(
+    context: Context,
+    private val scope: CoroutineScope,
+    private val listener: PebbleTransport.Listener,
+) : Pk2Bus.Consumer {
+
+    private val uuid = UUID.fromString(Protocol.WATCHAPP_UUID)
+    private val classic = PebbleTransport(context, uuid, listener)
+    private val pk2Sender = DefaultPebbleSender(context)
+
+    fun start() {
+        classic.start()
+        Pk2Bus.attach(this)
+    }
+
+    fun stop() {
+        Pk2Bus.detach(this)
+        classic.stop()
+        runCatching { pk2Sender.close() }
+    }
+
+    fun send(data: Map<Int, Any>) {
+        scope.launch {
+            // Per-watch result map; null = the phone app has no PK2 at all.
+            val results: Map<WatchIdentifier, TransmissionResult>? = runCatching {
+                pk2Sender.sendDataToPebble(uuid, data.toPk2Dictionary())
+            }.getOrElse { e ->
+                CmLog.d(TAG, "pk2 send threw: $e")
+                null
+            }
+            when {
+                results == null -> {
+                    CmLog.d(TAG, "pk2 unavailable — classic fallback")
+                    classic.send(data)
+                }
+                results.values.any { it is TransmissionResult.Success } ->
+                    CmLog.d(TAG, "pk2 tx ok $data")
+                results.values.all {
+                    it is TransmissionResult.FailedNoPermissions ||
+                        it is TransmissionResult.Unknown
+                } -> {
+                    CmLog.d(TAG, "pk2 rejected ($results) — classic fallback")
+                    classic.send(data)
+                }
+                else -> // watch-state failure: authoritative, don't double-send
+                    CmLog.w(TAG, "watch send failed: $results")
+            }
+        }
+    }
+
+    fun startWatchapp() {
+        scope.launch {
+            val results = runCatching { pk2Sender.startAppOnTheWatch(uuid) }
+                .getOrNull()
+            if (results == null ||
+                results.values.none { it is TransmissionResult.Success }) {
+                CmLog.d(TAG, "pk2 startApp $results — classic fallback")
+                classic.startWatchapp()
+            }
+        }
+    }
+
+    // ---- Pk2Bus.Consumer: inbound PK2 -> same listener as Classic ----
+
+    override fun onPk2Message(data: Map<Int, Any>) = listener.onAppMessage(data)
+
+    override fun onPk2AppOpened() {
+        CmLog.i(TAG, "pk2: watchapp opened")
+        listener.onConnectionChanged(true)
+    }
+
+    override fun onPk2AppClosed() {
+        CmLog.i(TAG, "pk2: watchapp closed (worker keeps monitoring)")
+    }
+
+    private fun Map<Int, Any>.toPk2Dictionary():
+        Map<UInt, PebbleDictionaryItem> = entries.associate { (k, v) ->
+        k.toUInt() to when (v) {
+            is Int -> PebbleDictionaryItem.Int32(v)
+            is String -> PebbleDictionaryItem.Text(v)
+            is ByteArray -> PebbleDictionaryItem.Bytes(v)
+            else -> error("unsupported type for key $k")
+        }
+    }
+
+    companion object { private const val TAG = "WatchLink" }
+}

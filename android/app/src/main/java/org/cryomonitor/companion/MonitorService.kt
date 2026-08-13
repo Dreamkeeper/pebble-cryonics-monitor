@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 class MonitorService : Service(), PebbleTransport.Listener {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private lateinit var transport: PebbleTransport
+    private lateinit var watchLink: WatchLink
     private lateinit var settings: SettingsStore
     private lateinit var server: ServerClient
     private lateinit var escalator: Escalator
@@ -45,9 +45,9 @@ class MonitorService : Service(), PebbleTransport.Listener {
         CmLog.i(TAG, "service starting, server=${settings.serverUrl.isNotEmpty()}")
         startForegroundSafely(buildNotification("Starting…"))
 
-        transport = PebbleTransport(context = this, listener = this)
-        transport.start()
-        transport.startWatchapp() // also relaunches the background worker
+        watchLink = WatchLink(context = this, scope = scope, listener = this)
+        watchLink.start()
+        watchLink.startWatchapp() // also relaunches the background worker
 
         scope.launch { watchdogLoop() }
         scope.launch { serverHeartbeatLoop() }
@@ -124,7 +124,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
 
     override fun onConnectionChanged(connected: Boolean) {
         watchConnected = connected
-        if (connected) transport.startWatchapp()
+        if (connected) watchLink.startWatchapp()
         updateNotification()
     }
 
@@ -170,7 +170,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                         "Open the watchapp to restart monitoring."
                     else
                         "Watch link lost ${silentFor}s — check Bluetooth/battery.")
-                transport.startWatchapp() // best-effort self-heal
+                watchLink.startWatchapp() // best-effort self-heal
             }
             updateNotification()
             delay(15_000) // also re-posts the notification (OSD pattern)
@@ -205,7 +205,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_USER_CANCEL -> {
-                transport.send(mapOf(
+                watchLink.send(mapOf(
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_USER_OK_REMOTE))
                 scope.launch { retract(intent.getStringExtra("cause") ?: "cancelled_on_phone") }
             }
@@ -218,7 +218,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 CmLog.debugEnabled = on
                 CmLog.i(TAG, "debug logging ${if (on) "ENABLED" else "disabled"} " +
                     "(pushing to watch)")
-                transport.send(mapOf(
+                watchLink.send(mapOf(
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_SET_DEBUG,
                     PebbleTransport.KEY_SECONDS to (if (on) 1 else 0)))
             }
@@ -270,7 +270,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     }
 
     override fun onDestroy() {
-        transport.stop()
+        watchLink.stop()
         scope.cancel()
         super.onDestroy()
     }

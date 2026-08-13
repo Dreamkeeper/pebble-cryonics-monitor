@@ -1,12 +1,11 @@
 {
   "name": "cryonics-monitor",
   "author": "Pebble Cryonics Monitor contributors",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "GPL-3.0",
   "private": true,
   "keywords": ["pebble-app"],
   "dependencies": {},
-  "_comment_companionApp": "companionApp is deliberately NOT declared in the pebble section. Declaring companionApp.android.apps[].package makes the Core app route AppMessages through PebbleKit2 (a bound-service protocol we don't implement yet) and show 'needs a companion app' on launch; with no declaration it falls back to PebbleKit Classic broadcast intents, which android/ implements. Re-add when migrating to PebbleKitAndroid2 (M2).",
   "pebble": {
     "displayName": "Cryonics Monitor",
     "uuid": "7f8e2c40-3a55-4d9b-9f21-6b1e0c2d4a90",
@@ -15,6 +14,13 @@
     "targetPlatforms": ["emery", "diorite", "flint", "gabbro"],
     "watchapp": {
       "watchface": false
+    },
+    "companionApp": {
+      "android": {
+        "apps": [
+          { "package": "org.cryomonitor.companion" }
+        ]
+      }
     },
     "messageKeys": {
       "MSG_TYPE": 1,

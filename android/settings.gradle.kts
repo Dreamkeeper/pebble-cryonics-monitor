@@ -11,9 +11,12 @@ pluginManagement {
 dependencyResolutionManagement {
     repositories {
         google()
+        // Two Maven Central mirrors: repo.maven.apache.org 403s on some
+        // networks, and each mirror can lag individual files — together
+        // they cover each other's gaps.
+        maven("https://maven-central.storage-download.googleapis.com/maven2")
         maven("https://maven.aliyun.com/repository/central")
         mavenCentral()
-        maven("https://jitpack.io") // PebbleKitAndroid2 (future)
     }
 }
 rootProject.name = "cryonics-monitor-companion"

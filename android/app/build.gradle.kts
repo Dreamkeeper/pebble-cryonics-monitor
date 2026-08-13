@@ -1,18 +1,20 @@
 plugins {
-    id("com.android.application") version "8.5.0"
-    id("org.jetbrains.kotlin.android") version "2.0.0"
+    // AGP >= 8.9.1 + compileSdk 36: required by PebbleKit2's androidx deps.
+    // Kotlin >= 2.3: PebbleKit2 1.2.0 ships Kotlin 2.3 metadata.
+    id("com.android.application") version "8.9.2"
+    id("org.jetbrains.kotlin.android") version "2.3.20"
 }
 
 android {
     namespace = "org.cryomonitor.companion"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "org.cryomonitor.companion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildTypes {
@@ -33,13 +35,18 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
 dependencies {
-    // TODO(M1): pin PebbleKitAndroid2 coordinates once published;
-    // fallback: legacy com.getpebble:pebblekit:4.0.1 via intents.
-    // implementation("com.github.pebble-dev:PebbleKitAndroid2:<version>")
+    // PebbleKit2: primary watch transport (Core app >= 1.0.7.7).
+    // The Classic intent transport in PebbleTransport.kt stays as fallback.
+    implementation("io.rebble.pebblekit2:client:1.2.0")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

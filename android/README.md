@@ -1,11 +1,16 @@
 # Android companion
 
-Kotlin foreground-service app pairing with the watchapp by UUID
-(`7f8e2c40-...`) over the PebbleKit Classic broadcast-intent protocol.
-The watchapp deliberately does NOT declare `companionApp` in its
-package.json — that declaration switches the Core mobile app to the
-PebbleKit2 bound-service protocol, which this app doesn't implement yet
-(planned for M2 via PebbleKitAndroid2).
+Kotlin foreground-service app pairing with the watchapp (UUID
+`7f8e2c40-...`).
+
+Watch transport: **PebbleKit2** (`io.rebble.pebblekit2:client`, needs the
+Core mobile app >= 1.0.7.7) is primary — the Core app binds
+`PebbleKit2ListenerService` when the watchapp opens, and `WatchLink`
+sends through `DefaultPebbleSender`. The PebbleKit Classic
+broadcast-intent transport (`PebbleTransport`) remains as an automatic
+fallback for older phone apps. The watchapp's `companionApp` declaration
+in `watchapp/package.json` is what makes the Core app pick PK2 — keep the
+package name in sync with `applicationId`.
 
 Status: structural skeleton — transport (PebbleKitAndroid2), alarm UI, and
 escalation are TODO(M1). Architecture is a Kotlin port of

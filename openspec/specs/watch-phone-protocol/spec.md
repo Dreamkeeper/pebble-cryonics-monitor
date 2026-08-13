@@ -1,0 +1,105 @@
+# Watch ↔ Phone Protocol Specification
+
+## Purpose
+
+Defines every message between the watchapp and the Android companion, and
+the transports that carry them. The wire constants are mirrored in code at
+`watchapp/src/core/protocol.h` (C) and `android/.../Protocol.kt` +
+`PebbleTransport.kt` (Kotlin). Watchapp UUID:
+`7f8e2c40-3a55-4d9b-9f21-6b1e0c2d4a90`.
+
+AppMessage keys (`messageKeys` in package.json — fixed numbers, never
+renumber): MSG_TYPE=1 (uint8), DETECTOR=2 (uint8), STAGE=3 (uint8),
+SECONDS=4 (uint16), CANCEL_REASON=5 (uint8), HEARTBEAT_SEQ=6 (uint16),
+WATCH_BATTERY=7 (uint8 %), HR_BPM=8 (uint8, 0=no signal),
+SUSPEND_REMAINING_S=9 (uint16), CFG_BLOB=10 (bytes, packed cm_config).
+
+Message types (MSG_TYPE): HEARTBEAT=1 (watch→phone, 1/min while app
+open), PRE_ALARM=2 (watch→phone, countdown started), ALARM=3
+(watch→phone, ladder exhausted), CANCEL=4 (watch→phone, with
+CANCEL_REASON), SUSPENDED=5 (watch→phone), CONFIG=6 (phone→watch,
+CFG_BLOB), CONFIG_ACK=7 (watch→phone), USER_OK_REMOTE=8 (phone→watch),
+SET_DEBUG=9 (phone→watch, SECONDS carries 0/1).
+
+## Requirements
+
+### Requirement: Protocol mirrors change together
+Any change to message types, key numbers, payload shapes, or persist/WMSG
+constants SHALL update `protocol.h`, `Protocol.kt`/`PebbleTransport.kt`,
+and this spec in the same change. (Both field bugs shipped so far —
+the companionApp schema mismatch and a missing Kotlin constant — were
+violations of this rule.)
+
+#### Scenario: A new message type lands consistently
+- **WHEN** a change adds or modifies a PMSG/WMSG/persist constant
+- **THEN** the C header, the Kotlin mirror, and this spec all change in
+  the same proposal, and the tasks include rebuilding both apps
+
+### Requirement: PebbleKit2 is the primary transport
+The companion SHALL implement the PebbleKit2 contract: a
+`BasePebbleListenerService` exported with the
+`io.rebble.pebblekit2.RECEIVE_DATA_FROM_WATCH` intent filter (inbound
+data, app opened/closed callbacks) and `DefaultPebbleSender` outbound.
+The watchapp SHALL declare `companionApp.android.apps[].package =
+"org.cryomonitor.companion"` in package.json using the object schema — a
+bare string breaks the Core app's .pbw parser and a declared-but-
+unimplemented companion makes the Core app NACK all messages.
+
+#### Scenario: Core app binds the companion when the watchapp opens
+- **WHEN** the wearer opens the watchapp on the watch
+- **THEN** the Core mobile app binds the companion's listener service and
+  delivers onAppOpened with the watch identifier
+
+### Requirement: PebbleKit Classic is the automatic fallback
+The companion SHALL keep the Classic broadcast-intent transport
+registered at runtime (`com.getpebble.action.app.SEND` / `.RECEIVE` /
+`.RECEIVE_ACK`; extras `uuid`, `transaction_id`, `msg_data` in the
+classic PebbleDictionary JSON encoding). Outbound sends SHALL fall back
+to Classic only on transport-level PebbleKit2 unavailability (old phone
+app), NOT when the watch is disconnected or NACKs — watch-state results
+are authoritative.
+
+#### Scenario: Old phone app still works
+- **WHEN** the installed Pebble phone app lacks PebbleKit2 support
+- **THEN** watch messages arrive via Classic broadcasts and outbound
+  sends succeed via the Classic SEND intent
+
+### Requirement: Alarm-path messages are ordered and complete
+The watch SHALL send PRE_ALARM when a COUNTDOWN starts and ALARM when it
+expires; the phone SHALL treat ALARM as authoritative even if PRE_ALARM
+was missed. CANCEL retracts both at any point and carries the reason.
+
+#### Scenario: Remote cancellation round-trip
+- **WHEN** the wearer cancels on the phone (USER_OK_REMOTE sent to watch)
+- **THEN** the watch clears its ladder and replies with CANCEL
+- **AND** the phone retracts escalation exactly once
+
+### Requirement: Worker alarms survive the launch gap
+Because the background worker cannot vibrate, draw UI, or send
+AppMessage, any user-facing action SHALL be parked in persist storage
+(PK_PENDING_ACTION=2) before `worker_launch_app()`; the foreground app
+consumes it on launch, or live via WMSG_ACTION if already open. Worker↔app
+messages use AppWorkerMessage types: ACTION=1, USER_OK=2, SUSPEND=3,
+RESUME=4, SOS=5, STATUS_REQ=6, STATUS=7, SET_DEBUG=8. Persist keys:
+CONFIG=1, PENDING_ACTION=2, MODE=3, SUSPEND_UNTIL=4,
+SUSPEND_AUTORESUME=5, DEBUG=6.
+
+#### Scenario: Alarm reaches the phone from a closed watchapp
+- **WHEN** the worker's ladder needs the CHECKIN UI while the foreground
+  app is closed
+- **THEN** the action is persisted, the app is launched by the worker,
+  picks the action up, vibrates, and sends the corresponding PMSG
+
+### Requirement: Watch heartbeats provide phone-side liveness
+While the foreground watchapp is open it SHALL send HEARTBEAT once per
+minute (sequence, battery). The worker SHALL log a DataLogging record
+(tag 0xC201, packed `{epoch_s u32, stage u8, battery u8, bpm u8,
+suspended u8}`) every 60 s as the audit trail and backup liveness
+channel. The companion's watch-watchdog raises a FAULT after
+WATCH_SILENT_AFTER_S (default 300 s) without watch data.
+
+#### Scenario: Worker eviction is surfaced, not silent
+- **WHEN** no watch data has arrived for WATCH_SILENT_AFTER_S while
+  Bluetooth remains connected
+- **THEN** the companion notifies the wearer of a probable worker
+  eviction and attempts a watchapp relaunch

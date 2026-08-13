@@ -1,0 +1,38 @@
+schema: spec-driven
+
+context: |
+  Pebble Cryonics Monitor: a 24/7 unresponsiveness alarm for cryonicists.
+  Monorepo: watchapp/ (C, Pebble SDK 4.x, background worker, platforms
+  emery/diorite/flint/gabbro), android/ (Kotlin companion, PebbleKit2
+  primary + PebbleKit Classic fallback), server/ (Python FastAPI,
+  self-hosted Docker on Synology/VPS). GPL-3.0.
+
+  Safety-critical constraints (from docs/PLAN.md, decided with the owner):
+  - Alarm-path logic must be deterministic and auditable; learning/LLM
+    layers may only SUGGEST config changes the user approves.
+  - Humans-first escalation: never auto-dial EMS.
+  - Never market as a medical device or "cardiac arrest detection".
+  - PPG limitation: "no HR reading" is ambiguous (arrest vs loose strap);
+    detectors must fuse signal absence with accelerometer stillness.
+  - Watch worker budget: 10.5 kB heap, no UI/vibration/AppMessage in the
+    worker; alarms route through worker_launch_app() -> foreground app.
+
+  Testing conventions: detector core has host-compiled C tests
+  (watchapp/tests, MSVC/gcc); server logic has pytest (server/tests).
+  Spec scenarios should map to tests in those suites where possible.
+  The watch<->phone protocol is mirrored in watchapp/src/core/protocol.h
+  and android .../Protocol.kt + PebbleTransport.kt — spec changes to the
+  protocol MUST update both sides plus the protocol spec.
+
+rules:
+  proposal:
+    - Always include a "Non-goals" section
+    - For anything touching the alarm path, state the false-positive and
+      false-negative impact explicitly
+  specs:
+    - Requirements about timing must state defaults AND whether they are
+      user-configurable
+  tasks:
+    - Every alarm-path change ends with running watchapp/tests and
+      server/tests, and rebuilding the .pbw with `pebble clean` first
+      (stale waf configure cache serves old appinfo.json otherwise)

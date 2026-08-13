@@ -26,6 +26,7 @@ never auto-dials them.
 | [`android/`](android/) | Android companion (Kotlin): foreground service, watch watchdog, full-screen alarm with cancel window, phone-direct SMS/call/Telegram fallback escalation, server link. |
 | [`server/`](server/) | Self-hosted backend (Python/FastAPI, Docker): phone dead-man monitoring, tiered escalation with delivery ACK + retry via Telegram/email/ntfy, web dashboard, learning-mode pattern miner. |
 | [`docs/`](docs/) | Product plan, threshold rationale, M0 feasibility-spike checklist. |
+| [`openspec/`](openspec/) | Living specs ([OpenSpec](https://github.com/Fission-AI/openspec)): detector ladder, watch↔phone protocol, escalation/dead-man, suspension. Changes flow through `/opsx:propose` → `/opsx:apply` → `/opsx:archive`. |
 | [`tools/`](tools/) | False-alarm log analysis, battery test harnesses. |
 
 ## Design lineage

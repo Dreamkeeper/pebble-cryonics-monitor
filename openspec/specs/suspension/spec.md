@@ -1,0 +1,84 @@
+# Suspension Specification
+
+## Purpose
+
+Lets the wearer pause monitoring for watch-off periods (shower, swim,
+sauna, charging) without generating false alarms — and resumes protection
+automatically when the watch is worn again. Implemented in the detector
+core (`cm_suspend` / `tick_suspension` in `watchapp/src/core/detectors.c`);
+covered by the suspension tests in `watchapp/tests/test_detectors.c`.
+
+## Requirements
+
+### Requirement: Preset and custom durations
+Suspension SHALL offer presets of 30 min, 1 h, and 2 h plus a custom
+duration, startable from the watch menu or the phone app.
+
+#### Scenario: Preset suspension from the watch
+- **WHEN** the wearer selects a 30-minute suspension on the watch
+- **THEN** monitoring pauses and the remaining time is queryable on both
+  watch and phone
+
+### Requirement: Suspension silences all detectors
+While suspended, no detector SHALL trigger and no pulse hunts SHALL run.
+Starting a suspension cancels an active CHECKIN or COUNTDOWN with reason
+SUSPEND — but a latched ALARM is NOT cleared by suspending; an alarm in
+progress must be explicitly cancelled.
+
+#### Scenario: Watch on the shelf stays silent
+- **WHEN** monitoring is suspended and the watch sees no pulse and no
+  motion for the whole period
+- **THEN** no detector actions are emitted until expiry
+
+### Requirement: Optional auto-resume on wear signals
+When auto-resume is enabled (default on), monitoring SHALL resume before
+expiry if the watch detects sustained motion (resume_motion_s consecutive
+seconds, default 15) or a valid pulse — and only a pulse read AFTER the
+suspension started counts; a stale pre-suspension reading MUST NOT
+trigger instant resume.
+
+#### Scenario: Putting the watch back on resumes early
+- **WHEN** suspension is active with auto-resume enabled
+- **AND** the wearer puts the watch on (sustained motion or fresh pulse)
+- **THEN** AUTO_RESUMED is emitted and detectors re-arm
+
+#### Scenario: Stale pulse does not resume
+- **WHEN** a suspension starts seconds after the last valid pulse reading
+- **THEN** that pre-suspension reading does not satisfy auto-resume
+
+### Requirement: Expiry re-arms cleanly
+At expiry or resume, all detector baselines SHALL reset to "now" so the
+stillness and pulse-absence accumulated during suspension cannot
+instantly trigger an alert. The wearer is notified (vibration + phone
+message); if wear signals remain absent after expiry, the not-worn nag
+ladder applies — never a contact alarm.
+
+#### Scenario: Expiry does not instantly alarm
+- **WHEN** a suspension expires while the watch is still off-wrist
+- **THEN** SUSPEND_EXPIRED is emitted with no immediate pulse-loss or
+  non-motion trigger, and the not-worn nag follows if wear signals stay
+  absent
+
+### Requirement: Suspension survives restarts and is visible remotely
+The suspension end-time and auto-resume flag SHALL be persisted on the
+watch (the worker restores them on relaunch), reported to the phone
+(PMSG_SUSPENDED), and included in server heartbeats so the dashboard can
+show "suspended until HH:MM". The server SHALL keep expecting phone
+heartbeats during suspension — suspension pauses detectors, not the
+dead-man monitor.
+
+#### Scenario: Worker restart preserves an active suspension
+- **WHEN** the worker restarts (reboot, relaunch) during a suspension
+- **THEN** the remaining suspension window is restored from persist
+  storage rather than resuming monitoring early
+
+### Requirement: Recurring suspension schedules are user-approved
+Recurring windows (e.g. pool every Tue/Thu 18:00–19:30) SHALL be
+supported via phone-side configuration. The learning layer MAY propose
+such windows from observed patterns, but only explicit user approval
+activates them (deterministic-alarm-path principle).
+
+#### Scenario: Learning proposes, the user disposes
+- **WHEN** the pattern miner detects a weekly watch-off window
+- **THEN** a suggestion is presented to the user
+- **AND** no automatic suspension occurs unless the user approves it

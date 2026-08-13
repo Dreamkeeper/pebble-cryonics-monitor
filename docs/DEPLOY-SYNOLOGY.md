@@ -40,16 +40,42 @@ CLI alternative: `docker compose up -d --build` over SSH.
 ## 4. HTTPS via DSM reverse proxy (recommended)
 
 The companion app talks to the server over the internet — put DSM's
-reverse proxy with a Let's Encrypt certificate in front:
+reverse proxy with a publicly trusted certificate in front. This mirrors
+how other self-hosted apps are typically exposed on DSM (one hostname per
+app, TLS terminated by DSM, backend on `127.0.0.1`):
 
-Control Panel → Login Portal → Advanced → **Reverse Proxy** → Create:
-- Source: HTTPS, `cryomonitor.your-ddns.synology.me`, port 443
-- Destination: HTTP, `localhost`, port 8080
+1. **DNS**: create an `A` record for your hostname pointing at your
+   household public IP (DNS-only / "gray cloud" if you use Cloudflare and
+   want DSM to hold the certificate).
+2. **Router**: forward **TCP 443 only** to the NAS. Never forward the
+   container's own port.
+3. **Certificate**: Control Panel → Security → Certificate → Add → get a
+   Let's Encrypt certificate for the hostname, then **Settings** → map
+   that hostname's service to the new certificate.
+4. **Reverse proxy**: Control Panel → Login Portal → Advanced → Reverse
+   Proxy → Create:
+   - Source: HTTPS, `cm.example.com`, port 443, HSTS on
+   - Destination: HTTP, `localhost`, port 8081 (the published host port)
+5. **Verify** from outside the LAN:
+   `curl -sS https://cm.example.com/api/v1/health` → `{"status":"ok",…}`
 
-Control Panel → Security → Certificate: issue/assign a Let's Encrypt
-certificate for that hostname. Use DSM's DDNS
-(Control Panel → External Access → DDNS) if you have no static IP, and
-forward port 443 on your router to the NAS.
+### Endpoint exposure
+
+Public exposure changes what may be readable without a token:
+
+| Endpoint | Auth | Why |
+|---|---|---|
+| `GET /api/v1/health` | none | liveness only, no wearer data — safe for uptime monitors |
+| `GET /api/v1/status` | token | contains GPS, contact ids, event log |
+| `POST /api/v1/*` | token | heartbeats, alarms, resolution |
+| `GET /api/v1/ack/{ack_token}` | unguessable token in the URL | contacts must be able to acknowledge from a message without an account |
+
+Recommended hardening once the hostname is public: a DSM/nginx rate limit
+on `/api/v1/`, and keeping the container's host port published only on
+the LAN/VPN interface so the sole public path is DSM's TLS terminator.
+Keeping a private path (VPN/tailnet) working alongside the public
+hostname gives the companion a manual fallback if DNS or the router
+fails.
 
 ## 5. Point the Android companion at it
 

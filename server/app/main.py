@@ -141,8 +141,21 @@ def ack(ack_token: str):
     return {"ok": True, "message": "Acknowledged. Thank you — updates will follow."}
 
 
+@app.get("/api/v1/health")
+def health():
+    """Unauthenticated liveness probe — safe to expose publicly.
+
+    Deliberately carries no wearer data so uptime monitors and the DSM
+    health check can hit it without a token.
+    """
+    return {"status": "ok", "service": "cryomonitor", "version": app.version}
+
+
 @app.get("/api/v1/status")
-def status():
+def status(token: str = ""):
+    # Token-gated: the payload includes GPS locations, contact ids and the
+    # event log, so it must not be readable from a public HTTPS endpoint.
+    _auth(token)
     deadman.evaluate(time.time())
     return {
         "phone": deadman.state.value,

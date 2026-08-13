@@ -115,6 +115,19 @@ before raising phone_silent.
 - **THEN** the wearer receives a FAULT notification exactly once per
   outage, and recovery is logged
 
+### Requirement: Endpoints are exposed according to what they reveal
+Any endpoint returning wearer data (locations, contact identities, event
+log) SHALL require the API token. A liveness endpoint carrying no wearer
+data MAY be unauthenticated so uptime monitors and health checks work on
+a publicly reachable deployment. Contact acknowledgement links SHALL
+authenticate by unguessable per-send token rather than the API token,
+because contacts have no credentials.
+
+#### Scenario: Public health probe leaks nothing
+- **WHEN** an unauthenticated client requests the health endpoint
+- **THEN** it receives only service liveness fields
+- **AND** the same client is refused (401) on the status endpoint
+
 ### Requirement: Fire drills exercise the real chain
 A TEST alarm SHALL traverse the identical code path as watch_alarm —
 tiers, channels, ACK tracking — with every message visibly tagged TEST.

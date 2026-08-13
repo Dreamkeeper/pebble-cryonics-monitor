@@ -31,13 +31,28 @@ def test_alarm_creates_escalation_and_resolve():
     esc_id = r.json()["escalation_id"]
     assert esc_id in main.active_escalations
 
-    s = client.get("/api/v1/status").json()
+    s = client.get("/api/v1/status", params={"token": "testtoken"}).json()
     assert s["active_escalations"][esc_id]["detector"] == "impact"
 
     r = client.post(f"/api/v1/alarm/{esc_id}/resolve",
                     params={"resolution": "false_alarm", "token": "testtoken"})
     assert r.status_code == 200
     assert main.active_escalations[esc_id].resolved
+
+
+def test_health_is_public_and_leaks_nothing():
+    r = client.get("/api/v1/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    # no wearer data may appear in the public probe
+    assert set(body) == {"status", "service", "version"}
+
+
+def test_status_requires_token():
+    assert client.get("/api/v1/status").status_code == 401
+    assert client.get("/api/v1/status",
+                      params={"token": "testtoken"}).status_code == 200
 
 
 def test_offline_window():

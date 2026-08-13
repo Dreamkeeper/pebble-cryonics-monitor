@@ -72,7 +72,11 @@ class MainActivity : Activity() {
                 settings.emergencyNumber = fEmg.text.toString().trim()
                     .ifEmpty { "112" }
                 settings.wearerName = fName.text.toString().trim()
-                Toast.makeText(this@MainActivity, "Saved", Toast.LENGTH_SHORT).show()
+                startService(Intent(this@MainActivity, MonitorService::class.java)
+                    .setAction(MonitorService.ACTION_HEARTBEAT_NOW))
+                Toast.makeText(this@MainActivity,
+                    "Saved — check the notification for server status",
+                    Toast.LENGTH_LONG).show()
             }
         })
 

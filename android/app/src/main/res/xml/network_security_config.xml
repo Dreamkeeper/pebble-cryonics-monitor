@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext HTTP is permitted because the recommended deployment reaches
+  the self-hosted server over a Tailscale/WireGuard tunnel (100.64/10) or
+  the LAN, where TLS terminates at the tunnel. If you expose the server
+  publicly, use HTTPS (DSM reverse proxy + Let's Encrypt) — the app makes
+  no attempt to downgrade https:// URLs.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -213,6 +213,16 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 CmLog.i(TAG, "fire-drill TEST alarm requested")
                 scope.launch { escalate("test", isTest = true) }
             }
+            ACTION_HEARTBEAT_NOW -> scope.launch {
+                val bm = getSystemService(BatteryManager::class.java)
+                val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                val ok = server.configured &&
+                    server.heartbeat(pct, watchBattery, null, lowBatteryWarning = false)
+                serverReachable = ok
+                CmLog.i(TAG, "manual heartbeat: ${if (ok) "OK" else "FAILED"} " +
+                    "(url=${settings.serverUrl.ifEmpty { "unset" }})")
+                updateNotification()
+            }
             ACTION_SET_DEBUG -> {
                 val on = intent.getBooleanExtra("enabled", false)
                 CmLog.debugEnabled = on
@@ -287,5 +297,6 @@ class MonitorService : Service(), PebbleTransport.Listener {
         const val ACTION_TEST_ALARM = "org.cryomonitor.TEST_ALARM"
         const val ACTION_ALERT_CANCELLED = "org.cryomonitor.ALERT_CANCELLED"
         const val ACTION_SET_DEBUG = "org.cryomonitor.SET_DEBUG"
+        const val ACTION_HEARTBEAT_NOW = "org.cryomonitor.HEARTBEAT_NOW"
     }
 }

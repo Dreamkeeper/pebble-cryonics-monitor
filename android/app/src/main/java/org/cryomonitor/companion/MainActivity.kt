@@ -122,7 +122,9 @@ class MainActivity : Activity() {
             }
         })
 
-        setContentView(ScrollView(this).apply { addView(col) })
+        val root = ScrollView(this).apply { addView(col) }
+        Ui.applySystemInsets(root)
+        setContentView(root)
     }
 
     /**

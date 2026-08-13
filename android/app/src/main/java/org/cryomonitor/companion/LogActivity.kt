@@ -46,6 +46,7 @@ class LogActivity : Activity() {
         }
         scroll = ScrollView(this).apply { addView(text) }
         col.addView(scroll)
+        Ui.applySystemInsets(col)
         setContentView(col)
         refresh()
     }

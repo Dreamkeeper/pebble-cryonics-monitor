@@ -77,6 +77,7 @@ class AlarmActivity : Activity() {
                     Uri.parse("tel:${settings.emergencyNumber}")))
             }
         })
+        Ui.applySystemInsets(root)
         setContentView(root)
 
         val filter = IntentFilter(MonitorService.ACTION_ALERT_CANCELLED)

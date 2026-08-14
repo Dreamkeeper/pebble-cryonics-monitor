@@ -12,7 +12,7 @@ import os
 import secrets
 import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from .deadman import DeadmanConfig, DeadmanMonitor, PhoneState
@@ -75,14 +75,28 @@ class OfflineWindowIn(BaseModel):
     duration_s: int
 
 
-def _auth(token: str) -> None:
-    if API_TOKEN and not secrets.compare_digest(token, API_TOKEN):
+def _auth(token: str = "", authorization: str | None = None) -> None:
+    """Authenticate a request.
+
+    Prefer `Authorization: Bearer <token>`: query strings are written to
+    reverse-proxy access logs, browser history and Referer headers, which
+    is unacceptable once the server is reachable over a public hostname.
+    The body/query `token` field stays accepted for older clients.
+    """
+    if not API_TOKEN:
+        return  # dev only
+    supplied = token or ""
+    if authorization:
+        scheme, _, value = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            supplied = value.strip()
+    if not secrets.compare_digest(supplied, API_TOKEN):
         raise HTTPException(401, "bad token")
 
 
 @app.post("/api/v1/heartbeat")
-def heartbeat(hb: HeartbeatIn):
-    _auth(hb.token)
+def heartbeat(hb: HeartbeatIn, authorization: str | None = Header(default=None)):
+    _auth(hb.token, authorization)
     t = time.time()
     deadman.heartbeat(t, hb.phone_battery_pct)
     if hb.low_battery_warning:
@@ -95,16 +109,16 @@ def heartbeat(hb: HeartbeatIn):
 
 
 @app.post("/api/v1/offline-window")
-def offline_window(w: OfflineWindowIn):
-    _auth(w.token)
+def offline_window(w: OfflineWindowIn, authorization: str | None = Header(default=None)):
+    _auth(w.token, authorization)
     deadman.declare_offline(time.time(), w.duration_s)
     log_event("offline_window", duration_s=w.duration_s)
     return {"state": PhoneState.OFFLINE_DECLARED.value}
 
 
 @app.post("/api/v1/alarm")
-def alarm(a: AlarmIn):
-    _auth(a.token)
+def alarm(a: AlarmIn, authorization: str | None = Header(default=None)):
+    _auth(a.token, authorization)
     t = time.time()
     esc_id = f"esc-{int(t)}-{a.detector}"
     kind = AlertKind(a.kind)
@@ -118,8 +132,9 @@ def alarm(a: AlarmIn):
 
 
 @app.post("/api/v1/alarm/{esc_id}/resolve")
-def resolve(esc_id: str, resolution: str = "false_alarm", token: str = ""):
-    _auth(token)
+def resolve(esc_id: str, resolution: str = "false_alarm", token: str = "",
+            authorization: str | None = Header(default=None)):
+    _auth(token, authorization)
     esc = active_escalations.get(esc_id)
     if not esc:
         raise HTTPException(404, "unknown escalation")
@@ -152,10 +167,10 @@ def health():
 
 
 @app.get("/api/v1/status")
-def status(token: str = ""):
+def status(token: str = "", authorization: str | None = Header(default=None)):
     # Token-gated: the payload includes GPS locations, contact ids and the
     # event log, so it must not be readable from a public HTTPS endpoint.
-    _auth(token)
+    _auth(token, authorization)
     deadman.evaluate(time.time())
     return {
         "phone": deadman.state.value,

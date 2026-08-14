@@ -44,10 +44,13 @@ class ServerClient(private val settings: SettingsStore) {
     }
 
     fun resolve(escalationId: String, resolution: String): Boolean {
+        // Token goes in the Authorization header, never the query string:
+        // a public reverse proxy writes full URLs to its access log.
         val url = "${settings.serverUrl}/api/v1/alarm/$escalationId/resolve" +
-            "?resolution=$resolution&token=${settings.apiToken}"
+            "?resolution=$resolution"
         return runCatching {
             http.newCall(Request.Builder().url(url)
+                .header("Authorization", "Bearer ${settings.apiToken}")
                 .post(ByteArray(0).toRequestBody(null)).build())
                 .execute().use { it.isSuccessful }
         }.getOrDefault(false)
@@ -62,11 +65,11 @@ class ServerClient(private val settings: SettingsStore) {
 
     private fun postForBody(path: String, body: JSONObject): String? {
         if (!configured) return null
-        body.put("token", settings.apiToken)
         val result = runCatching {
             http.newCall(
                 Request.Builder()
                     .url(settings.serverUrl + path)
+                    .header("Authorization", "Bearer ${settings.apiToken}")
                     .post(body.toString()
                         .toRequestBody("application/json".toMediaType()))
                     .build())

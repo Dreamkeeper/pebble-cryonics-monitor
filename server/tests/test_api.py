@@ -55,6 +55,21 @@ def test_status_requires_token():
                       params={"token": "testtoken"}).status_code == 200
 
 
+def test_bearer_header_authenticates_without_query_token():
+    """Tokens must not need to appear in URLs (they land in access logs)."""
+    h = {"Authorization": "Bearer testtoken"}
+    assert client.get("/api/v1/status", headers=h).status_code == 200
+    assert client.post("/api/v1/heartbeat", json={}, headers=h).status_code == 200
+    assert client.post("/api/v1/alarm", json={"detector": "impact"},
+                       headers=h).status_code == 200
+
+
+def test_bad_bearer_header_rejected():
+    for bad in ["Bearer wrong", "Basic testtoken", "testtoken", ""]:
+        r = client.get("/api/v1/status", headers={"Authorization": bad})
+        assert r.status_code == 401, bad
+
+
 def test_offline_window():
     r = client.post("/api/v1/offline-window",
                     json={"token": "testtoken", "duration_s": 3600})

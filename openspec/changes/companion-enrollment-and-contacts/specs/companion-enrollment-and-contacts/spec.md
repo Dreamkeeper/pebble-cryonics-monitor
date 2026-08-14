@@ -33,6 +33,12 @@ wearer's data.
 - **THEN** the change is validated, persisted server-side, and the next
   escalation send uses the new address
 
+#### Scenario: Wearer configures their own copies
+- **WHEN** the wearer sets a self-notification address (their own
+  Telegram/ntfy/email) in the same management flow
+- **THEN** it persists to the wearer record and future escalations send
+  the wearer labeled copies per the server spec
+
 ### Requirement: The safety net is visible and its absence is loud
 The app SHALL present the escalation order (tiers with their contacts
 and timing) as the wearer's safety net, and SHALL surface the server's

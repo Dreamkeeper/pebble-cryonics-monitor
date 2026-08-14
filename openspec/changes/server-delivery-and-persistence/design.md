@@ -111,6 +111,17 @@ that token, marked migrated in the event log. Keeps the currently
 deployed phone working with zero action. Afterwards `CM_API_TOKEN` is
 ignored for auth (admin token is `CM_ADMIN_TOKEN`, new).
 
+**D11 — Self-notification via configured address, no separate toggle.**
+Owner decision (2026-08-14): a wearer may receive copies of their own
+escalation notifications. Design: the wearer record carries optional
+self-notification channel addresses (Telegram chat id / ntfy topic /
+email); configuring an address IS the opt-in — no separate boolean to
+drift out of sync. When set, the wearer is an implicit recipient on
+their own escalations (clearly labeled "copy to wearer", no ACK button
+— wearer awareness must not satisfy ACK gating; cancelling from the
+phone remains the wearer's action). Especially valuable for
+phone-silent advisories read on a second device.
+
 ## Risks / Trade-offs
 
 - **At-least-once duplicates** (D3): bounded to one send per
@@ -145,5 +156,5 @@ companion change lands.
 
 - ntfy ACK action: ship `view` (universal support) first; revisit
   `http` action after field use.
-- Whether the wearer should receive copies of escalation sends
-  (self-notification). Deferred to the dashboard change.
+- ~~Wearer self-notification~~ — resolved by owner 2026-08-14: yes,
+  optional per wearer (D11).

@@ -74,6 +74,28 @@ the public health endpoint only as a count, never a name.
   reason, public health exposes at most a degraded count, and no
   escalation for that wearer pretends to fan out to nobody
 
+### Requirement: Wearers may receive copies of their own escalations
+A wearer with self-notification addresses configured (Telegram chat id,
+ntfy topic, and/or email on the wearer record) SHALL receive a copy of
+each notification sent for their own escalations, clearly labeled as a
+copy to the wearer. Configuring an address is the opt-in; removing it
+is the opt-out. Wearer copies SHALL carry no acknowledge affordance and
+SHALL never satisfy ACK gating — awareness is not response. Copies are
+sent for all alert kinds including phone-silent advisories (their main
+purpose: a wearer reading on a second device learns their contacts were
+just alerted).
+
+#### Scenario: Wearer learns their contacts were paged
+- **WHEN** an escalation send fans out for a wearer who configured a
+  self-notification address
+- **THEN** the wearer's address receives a labeled copy without an ACK
+  button, and tier promotion timing is unaffected by its delivery
+
+#### Scenario: No address, no copies
+- **WHEN** a wearer has no self-notification address configured
+- **THEN** no wearer copies are attempted and nothing is logged as a
+  failed send
+
 ## MODIFIED Requirements
 
 ### Requirement: Every outbound message carries a one-tap ACK

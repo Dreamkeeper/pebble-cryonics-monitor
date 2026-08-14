@@ -76,6 +76,6 @@ per D5. Rollback: previous image ignores the new tables.
 
 ## Open Questions
 
-- Whether responders may trigger fire drills (currently admin-only in
-  the spec via "administration"; drills are harmless but noisy).
-  Default: admin-only; revisit after group use.
+- ~~Responder fire drills~~ — resolved by owner 2026-08-14: admin-only
+  (a new responder must not be able to accidentally page a family's
+  real contacts); revisit only if group practice demands it.

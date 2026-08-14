@@ -51,10 +51,15 @@
 - [ ] 3.2 Wire the pump per wearer: due send → mint+persist ACK token →
       deliver → persist attempt on transport acceptance (D3); failed
       channels retry on repeat cadence; delivery outcomes in status
-- [ ] 3.3 Tests with fake transports: fan-out, partial channel failure
+- [ ] 3.3 Wearer self-notification copies (D11): wearer record gains
+      optional self-notify addresses (settable via contact API +
+      admin); labeled copies on every send incl. phone-silent, no ACK
+      affordance, never counted by ACK gating
+- [ ] 3.4 Tests with fake transports: fan-out, partial channel failure
       retry, TEST parity, commit-ordering (crash between send and
       commit re-sends with same escalation id), two-wearer concurrent
-      escalations stay separate
+      escalations stay separate, self-notify copies present/absent per
+      configuration and inert for gating
 
 ## 4. Acknowledgement receipt
 

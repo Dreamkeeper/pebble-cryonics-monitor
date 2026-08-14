@@ -24,6 +24,8 @@
 - [ ] 3.3 DEGRADED banner on main screen + FAULT-channel notification
       wiring from status payload
 - [ ] 3.4 Fire-drill affordance adjacent to the contacts flow
+- [ ] 3.5 Self-notification address editing on the wearer's own record
+      (same flow as contacts; explains "copies of alerts to yourself")
 
 ## 4. Verification
 

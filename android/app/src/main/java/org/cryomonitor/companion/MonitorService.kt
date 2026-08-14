@@ -220,7 +220,8 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     server.heartbeat(pct, watchBattery, null, lowBatteryWarning = false)
                 serverReachable = ok
                 CmLog.i(TAG, "manual heartbeat: ${if (ok) "OK" else "FAILED"} " +
-                    "(url=${settings.serverUrl.ifEmpty { "unset" }})")
+                    "(url=${settings.serverUrl.ifEmpty { "unset" }}, " +
+                    "result=${server.lastResult})")
                 updateNotification()
             }
             ACTION_SET_DEBUG -> {
@@ -273,7 +274,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
         val srv = when {
             !server.configured -> "no server"
             serverReachable -> "server ok"
-            else -> "SERVER DOWN"
+            else -> "SERVER: ${server.lastResult}"
         }
         val wb = watchBattery?.let { " ${it}%" } ?: ""
         return "watch $age$wb · $srv"

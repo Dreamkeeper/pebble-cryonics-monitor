@@ -22,6 +22,15 @@ class ServerClient(private val settings: SettingsStore) {
 
     val configured: Boolean get() = settings.serverUrl.isNotEmpty()
 
+    /**
+     * Human-readable outcome of the last call, for the notification and the
+     * log. "Cannot reach the server" and "the server rejected my token" are
+     * different problems with different fixes, so they must never look alike.
+     */
+    @Volatile
+    var lastResult: String = "not tried yet"
+        private set
+
     fun heartbeat(phoneBatteryPct: Int, watchBatteryPct: Int?, watchDataAgeS: Int?,
                   lowBatteryWarning: Boolean): Boolean =
         post("/api/v1/heartbeat", JSONObject().apply {
@@ -64,20 +73,34 @@ class ServerClient(private val settings: SettingsStore) {
         postForBody(path, body) != null
 
     private fun postForBody(path: String, body: JSONObject): String? {
-        if (!configured) return null
+        if (!configured) {
+            lastResult = "no server URL set"
+            return null
+        }
+        val url = settings.serverUrl + path
         val result = runCatching {
             http.newCall(
                 Request.Builder()
-                    .url(settings.serverUrl + path)
+                    .url(url)
                     .header("Authorization", "Bearer ${settings.apiToken}")
                     .post(body.toString()
                         .toRequestBody("application/json".toMediaType()))
                     .build())
                 .execute().use { r ->
-                    CmLog.d(TAG, "POST $path -> ${r.code}")
+                    lastResult = when {
+                        r.isSuccessful -> "ok"
+                        r.code == 401 -> "token rejected (401)"
+                        else -> "HTTP ${r.code}"
+                    }
+                    // INFO, not DEBUG: this is the line you need when the
+                    // connection misbehaves, without turning debug mode on.
+                    CmLog.i(TAG, "POST $url -> ${r.code}")
                     if (r.isSuccessful) r.body?.string() else null
                 }
-        }.onFailure { CmLog.d(TAG, "POST $path failed: $it") }
+        }.onFailure {
+            lastResult = "unreachable: ${it.javaClass.simpleName}"
+            CmLog.i(TAG, "POST $url failed: $it")
+        }
         return result.getOrNull()
     }
 

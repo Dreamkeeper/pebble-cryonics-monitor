@@ -8,10 +8,21 @@ services:
     ports:
       - "8080:8080"
     environment:
-      CM_API_TOKEN: ${CM_API_TOKEN:?set a strong token}
+      # Legacy single-wearer token: migrated into wearer 'default' on
+      # first boot with an empty database, inert afterwards.
+      CM_API_TOKEN: ${CM_API_TOKEN:-}
+      # Admin credential for wearer/enrollment/contact administration.
+      CM_ADMIN_TOKEN: ${CM_ADMIN_TOKEN:-}
+      # Public base URL, used to build acknowledge links in messages.
+      CM_PUBLIC_URL: ${CM_PUBLIC_URL:-}
       CM_TELEGRAM_BOT_TOKEN: ${CM_TELEGRAM_BOT_TOKEN:-}
       CM_SMTP_HOST: ${CM_SMTP_HOST:-}
+      CM_SMTP_PORT: ${CM_SMTP_PORT:-587}
+      CM_SMTP_USER: ${CM_SMTP_USER:-}
+      CM_SMTP_PASSWORD: ${CM_SMTP_PASSWORD:-}
+      CM_SMTP_FROM: ${CM_SMTP_FROM:-}
       CM_NTFY_URL: ${CM_NTFY_URL:-https://ntfy.sh}
+      CM_ENROLL_TTL_S: ${CM_ENROLL_TTL_S:-86400}
       # Debug mode: set to DEBUG in .env for extensive logs
       CM_LOG_LEVEL: ${CM_LOG_LEVEL:-INFO}
     volumes:

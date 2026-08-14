@@ -91,7 +91,7 @@
       round-trip on each channel; then restart the container
       mid-TEST-escalation and verify recovery on the NAS (the scenario
       that motivated this change)
-- [ ] 5.5 Log the deployment in `HOMELAB-INFRASTRUCTURE-STATE.md` and
+- [x] 5.5 Log the deployment in `HOMELAB-INFRASTRUCTURE-STATE.md` and
       add the CryoMonitor data volume to the SSD boot guard / daily
       backup per the runbook's standing note
 - [ ] 5.6 Sync delta specs into `openspec/specs/` (escalation-and-

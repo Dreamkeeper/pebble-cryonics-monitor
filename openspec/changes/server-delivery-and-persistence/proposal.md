@@ -8,10 +8,12 @@ escalation pump only writes log events, and every alarm, ACK token and
 dead-man baseline lives in process memory, so a container restart —
 which happened twice in one day during routine maintenance — silently
 forgets active escalations. Until delivery and persistence exist, the
-phone is the only real alert path and the server tier is bookkeeping;
-this is the gap called out in the deployment runbook ("not yet
-production-ready as a safety monitor") and in the product-requirements
-pending-scope ledger.
+phone is the only real alert path and the server tier is bookkeeping.
+The owner has also widened the product: one server instance must serve
+multiple wearers (a family, a small cryonics company, or a response
+group), with contacts managed from the Android app rather than files on
+the NAS — so the data model and auth must be multi-wearer from the
+start, not retrofitted.
 
 ## What Changes
 
@@ -21,68 +23,82 @@ pending-scope ledger.
   tokens are minted, stored, and honored end to end.
 - Receive Telegram acknowledgements via bot **long-polling** (no inbound
   webhook, so the public attack surface does not grow).
-- Persist alarm state in SQLite under the already-mounted `/srv/data`
-  volume: escalations with per-contact state, ACK tokens, the event
-  log, and the dead-man baseline. On startup the server restores
-  unresolved escalations and resumes their timers honestly (elapsed
-  downtime counts toward repeat/promotion clocks).
-- Replace the hardcoded placeholder tiers with operator-provided
-  contact configuration (`contacts.yaml` in the data volume), validated
-  at startup; a missing or invalid file puts the server into a visible
-  DEGRADED state on `/api/v1/health` instead of silently escalating to
-  nobody.
+- Persist all alarm state in SQLite under the already-mounted
+  `/srv/data` volume: wearers, contacts, tiers, escalations with
+  per-contact state, ACK tokens, the event log, and per-wearer dead-man
+  baselines. On startup the server restores unresolved escalations and
+  resumes their timers honestly (elapsed downtime counts).
+- **Multi-wearer data model and auth**: every monitored person is a
+  `wearer` with their own bearer token, contacts, tiers, dead-man state
+  and escalations, fully isolated from other wearers. An admin
+  credential (env-provided for now; operator accounts arrive with the
+  web dashboard change) creates wearers and issues one-time enrollment
+  codes; the Android app exchanges an enrollment code for its per-wearer
+  token. **BREAKING** for the API: phone endpoints now authenticate with
+  per-wearer tokens; the legacy single `CM_API_TOKEN` deployment is
+  migrated automatically into a default wearer on first boot so the
+  existing phone keeps working.
+- **Contacts managed via API, not files**: CRUD endpoints for a wearer's
+  contacts and tiers, callable with that wearer's token (self-service
+  from the Android app) or the admin credential (response-group
+  operators). No `contacts.yaml`, no hardcoded placeholder tiers. A
+  wearer with no deliverable contacts puts that wearer — not the server
+  — into a visible DEGRADED state.
 - Channel delivery failures are retried on the existing repeat cadence
-  and surfaced in `/api/v1/status`; a send is "delivered" only when the
-  transport accepted it.
+  and surfaced in status; a send is "delivered" only when the transport
+  accepted it.
 
-Alarm-path impact (required disclosure): this change does not alter
-detection or the ladder, so false-negative/false-positive *detection*
-rates are untouched. It strictly reduces effective false negatives at
-the delivery layer (today: 100% of server-side alerts are lost) and can
-introduce duplicate notifications after a restart in one edge case
-(send accepted by transport, crash before the persist commit) — the
-design keeps that window minimal and duplicates are tagged with the
-same escalation id.
+Alarm-path impact (required disclosure): detection and the ladder are
+untouched, so detection false-positive/negative rates do not change.
+Delivery-layer false negatives strictly decrease (today 100% of
+server-side alerts are lost). New risk introduced by multi-tenancy —
+cross-wearer leakage — is addressed in the specs (strict per-wearer
+isolation requirement). At-least-once delivery can duplicate one send
+after a crash mid-send; duplicates carry the same escalation id.
 
 ## Non-goals
 
-- Web dashboard / contact management UI (M2 scope, separate change).
-- Multi-wearer support; the schema stores a wearer id but all logic
-  remains single-wearer.
-- Voice calls, SMS-from-server, SIP/Twilio plugins, the gateway-phone
-  role (later versions per the product ledger).
+- Web dashboard and operator accounts — follow-up change
+  `server-web-dashboard` (depends on this one).
+- Android contact-management UI — follow-up change
+  `companion-enrollment-and-contacts` (depends on this one); this change
+  ships the API it will call.
+- Contact opt-in confirmation flow (dashboard-era work).
+- Voice calls, SMS-from-server, SIP/Twilio plugins, gateway-phone role.
 - OwnTracks/Dawarich liveness probes.
 - Postgres; SQLite only (single writer, NAS deployment).
-- Any watchapp or Android companion change.
+- Any watchapp change.
 
 ## Capabilities
 
 ### New Capabilities
 
-(none — this delivers behavior already owed by the escalation capability)
+- `wearer-management`: wearer lifecycle (create/disable), enrollment
+  codes and per-wearer token issuance/revocation, admin authentication,
+  contact/tier CRUD, legacy single-token migration, per-wearer isolation
+  guarantees.
 
 ### Modified Capabilities
 
 - `escalation-and-deadman`: delivery becomes real (sends reach
-  transports, with per-channel semantics and failure handling), ACKs
-  become receivable (Telegram callbacks, ntfy/email links), state
-  becomes durable across restarts, and contacts become operator
-  configuration with a fail-visible degraded mode.
+  transports with per-channel semantics and failure handling), ACKs
+  become receivable (Telegram long-poll callbacks, ntfy/email links),
+  state becomes durable across restarts, and escalation/dead-man logic
+  becomes per-wearer with contacts sourced from the store instead of
+  operator files.
 
 ## Impact
 
-- `server/app/`: new `store.py` (SQLite), new `contacts.py` (config
-  load/validation), new `telegram_poll.py` (ACK long-poll task);
-  `channels.py` gains real async delivery (offloaded blocking IO);
-  `main.py` pump wires sends → channels and persists all state
-  transitions.
-- `server/tests/`: new suites for persistence round-trip, restart
-  recovery, contact-config validation, channel dispatch (fake
-  transports), Telegram callback parsing.
-- Deployment: one new file for the operator (`/srv/data/contacts.yaml`),
-  documented in `docs/DEPLOY-SYNOLOGY.md`; `.env` gains SMTP/ntfy keys
-  already stubbed in `.env.example`. No new ports, no schema change to
-  the phone API, no companion update required.
-- After this change the NAS deployment must be added to the SSD boot
-  guard / backup mirror per the homelab runbook note (the data volume
-  now holds state worth protecting).
+- `server/app/`: new `store.py` (SQLite), new `wearers.py` (tenancy,
+  enrollment, auth resolution), new `telegram_poll.py`; `channels.py`
+  gains real async delivery; `main.py` gains wearer-scoped auth,
+  contact/tier CRUD and admin endpoints; pump becomes per-wearer.
+- `server/tests/`: persistence round-trip, restart recovery, wearer
+  isolation (the critical new suite), enrollment/auth, contact CRUD,
+  channel dispatch with fake transports, Telegram callback parsing.
+- Android companion: no code change required for existing function (its
+  bearer token keeps working via migration); the enrollment flow and
+  contact screens land in `companion-enrollment-and-contacts`.
+- Deployment: new env keys (`CM_ADMIN_TOKEN`, SMTP/ntfy already
+  stubbed); no new ports; NAS data volume now holds state — add to SSD
+  boot guard / daily backup per the homelab runbook note.

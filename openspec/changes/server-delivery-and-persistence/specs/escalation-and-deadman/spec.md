@@ -1,4 +1,4 @@
-# Delta: escalation-and-deadman — real delivery, receivable ACKs, durable state
+# Delta: escalation-and-deadman — real delivery, receivable ACKs, durable multi-wearer state
 
 ## ADDED Requirements
 
@@ -16,8 +16,9 @@ and the failure is visible in the status payload and the log.
 - **WHEN** an escalation makes a send due for a contact configured with
   Telegram
 - **THEN** that contact's Telegram receives a message containing the
-  alert kind, detector, location link when available, and an inline
-  acknowledge button — TEST-tagged when the alert kind is test
+  wearer's name, alert kind, detector, location link when available,
+  and an inline acknowledge button — TEST-tagged when the alert kind is
+  test
 
 #### Scenario: A down transport does not lose the alert
 - **WHEN** a channel transport rejects or times out
@@ -27,13 +28,14 @@ and the failure is visible in the status payload and the log.
 
 ### Requirement: Alarm and dead-man state survive restarts
 Escalation state (per-contact sends, acknowledgements, resolution), ACK
-tokens, the event log, and the dead-man baseline SHALL be persisted to
-the server's data volume. On startup the server SHALL restore unresolved
-escalations and continue their repeat/promotion timers with elapsed
-downtime counted (a restart must never reset an escalation's clocks or
-resurrect a resolved one). Delivery is at-least-once across a crash:
-in the worst case a send accepted just before a crash may be repeated,
-and any duplicate SHALL carry the same escalation identifier.
+tokens, the event log, and every wearer's dead-man baseline SHALL be
+persisted to the server's data volume. On startup the server SHALL
+restore unresolved escalations and continue their repeat/promotion
+timers with elapsed downtime counted (a restart must never reset an
+escalation's clocks or resurrect a resolved one). Delivery is
+at-least-once across a crash: in the worst case a send accepted just
+before a crash may be repeated, and any duplicate SHALL carry the same
+escalation identifier.
 
 #### Scenario: Restart during an active escalation
 - **WHEN** the server restarts while an unacknowledged escalation is
@@ -45,23 +47,32 @@ and any duplicate SHALL carry the same escalation identifier.
 
 #### Scenario: Dead-man survives the restart honestly
 - **WHEN** the server restarts after some downtime
-- **THEN** the last-heartbeat baseline is restored from disk and the
-  downtime counts toward phone silence rather than resetting it
+- **THEN** each wearer's last-heartbeat baseline is restored from disk
+  and the downtime counts toward that wearer's phone silence rather
+  than resetting it
 
-### Requirement: Contacts are operator configuration, failing visibly
-Tiers and contacts SHALL come from an operator-provided configuration
-file on the data volume, validated at startup (structure, at least one
-tier, at least one contact with at least one channel, channel-specific
-addressing present). No placeholder or hardcoded contacts may exist in a
-running server. If the configuration is missing or invalid, the server
-SHALL enter a DEGRADED state that is visible on the unauthenticated
-health endpoint and in status, and SHALL say so rather than pretending
-escalation coverage exists.
+### Requirement: Escalation and dead-man state are per-wearer and isolated
+Every escalation, dead-man baseline, contact list, tier definition, and
+event-log entry SHALL belong to exactly one wearer. One wearer's alarm,
+silence, suspension, or configuration SHALL never affect another
+wearer's escalation behavior, and no API response authenticated with one
+wearer's token may contain another wearer's data. Contacts and tiers
+come from the store (managed via the wearer-management API); a wearer
+whose configuration has no deliverable contact SHALL be individually
+DEGRADED — visible in authenticated status with the wearer named, and on
+the public health endpoint only as a count, never a name.
 
-#### Scenario: Missing contact configuration is loud
-- **WHEN** the server starts without a valid contact configuration
-- **THEN** health reports degraded with a reason, status names the
-  problem, and no escalation pretends to fan out to nobody
+#### Scenario: Two wearers, one alarm
+- **WHEN** wearer A's ladder exhausts while wearer B is quiet
+- **THEN** only A's tiers escalate, B's contacts receive nothing, and
+  B's status is unchanged
+
+#### Scenario: Unconfigured wearer is loud about it, privately
+- **WHEN** a wearer has no contact with at least one working channel
+  address
+- **THEN** authenticated status marks that wearer DEGRADED with a
+  reason, public health exposes at most a degraded count, and no
+  escalation for that wearer pretends to fan out to nobody
 
 ## MODIFIED Requirements
 
@@ -73,8 +84,9 @@ Telegram button presses arrive via bot long-polling (no inbound webhook,
 so the public surface does not grow) and are answered so the contact
 sees confirmation; ntfy and email ACK links resolve against the public
 hostname and confirm in the response. ACK tokens are single-purpose,
-unguessable, durable across restarts, and invalid or replayed tokens are
-rejected without side effects.
+unguessable, durable across restarts, scoped to one wearer's one
+escalation, and invalid or replayed tokens are rejected without side
+effects.
 
 #### Scenario: ACK link records the contact
 - **WHEN** a contact taps their ACK link/button

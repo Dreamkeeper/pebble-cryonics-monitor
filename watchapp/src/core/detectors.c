@@ -27,6 +27,9 @@ int cm_next_action(cm_core *c, cm_action *out) {
 
 void cm_config_defaults(cm_config *cfg) {
   for (int i = 0; i < CM_DET_COUNT; i++) cfg->enabled[i] = 1;
+  /* Scheduled check-in is opt-in: it is the only detector that demands
+   * periodic attention from the wearer even when nothing is wrong. */
+  cfg->enabled[CM_DET_CHECKIN] = 0;
   cfg->hr_available = 1;
   cfg->motion_jerk_mg = 60;
 

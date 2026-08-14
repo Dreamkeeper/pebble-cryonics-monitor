@@ -71,13 +71,19 @@ static void push_status_to_app(void) {
   app_worker_send_message(WMSG_STATUS, &m);
 }
 
-/* Park the action for the foreground app and wake it. */
-static void hand_to_app(const cm_action *a) {
-  persist_write_data(PK_PENDING_ACTION, a, sizeof(*a));
+/* Tell the foreground app about an action.
+ *
+ * `launch` must be true ONLY when the wearer has to see or do something
+ * right now: launching takes over the screen and hides the watchface, so
+ * informational events (cancellations, nags, suspension changes) are
+ * delivered just to an app that already happens to be open. */
+static void notify_app(const cm_action *a, bool launch) {
   AppWorkerMessage m = {
     .data0 = a->type, .data1 = a->detector, .data2 = a->seconds,
   };
   app_worker_send_message(WMSG_ACTION, &m); /* no-op if app not running */
+  if (!launch) return;
+  persist_write_data(PK_PENDING_ACTION, a, sizeof(*a));
   worker_launch_app();
 }
 
@@ -97,16 +103,25 @@ static void drain_actions(void) {
     switch (a.type) {
       case CM_ACT_HR_BURST_ON:  set_hr_burst(true);  break;
       case CM_ACT_HR_BURST_OFF: set_hr_burst(false); break;
-      /* Everything else needs vibration/UI/phone -> foreground app. */
+
+      /* Needs the wearer's attention now: take the screen. */
       case CM_ACT_CHECKIN_START:
       case CM_ACT_COUNTDOWN_START:
       case CM_ACT_ALARM:
+        notify_app(&a, true);
+        break;
+      /* Only reached when the wearer opted into scheduled check-ins, i.e.
+       * asked to be prompted. */
+      case CM_ACT_CHECKIN_REMINDER:
+        notify_app(&a, true);
+        break;
+
+      /* Informational: never hijack the watchface for these. */
       case CM_ACT_ALERT_CANCELLED:
       case CM_ACT_NOTWORN_NAG:
-      case CM_ACT_CHECKIN_REMINDER:
       case CM_ACT_SUSPEND_EXPIRED:
       case CM_ACT_AUTO_RESUMED:
-        hand_to_app(&a);
+        notify_app(&a, false);
         break;
       default: break;
     }

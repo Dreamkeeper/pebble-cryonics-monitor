@@ -141,7 +141,10 @@ static void test_defaults(void) {
   CHECK(cfg.nonmotion_day_min == 40);
   CHECK(cfg.nonmotion_night_min == 90);
   CHECK(cfg.countdown_impact_s < cfg.countdown_s); /* impacts get a faster fuse */
-  for (int i = 0; i < CM_DET_COUNT; i++) CHECK(cfg.enabled[i] == 1);
+  /* Scheduled check-in is opt-in; every passive detector is on by default. */
+  CHECK(cfg.enabled[CM_DET_CHECKIN] == 0);
+  for (int i = 0; i < CM_DET_COUNT; i++)
+    if (i != CM_DET_CHECKIN) CHECK(cfg.enabled[i] == 1);
 }
 
 static void test_impact_full_ladder(void) {
@@ -382,6 +385,7 @@ static void test_scheduled_checkin(void) {
   cfg.enabled[CM_DET_PULSE] = 0;
   cfg.enabled[CM_DET_NONMOTION] = 0;
   cfg.enabled[CM_DET_NOTWORN] = 0;
+  cfg.enabled[CM_DET_CHECKIN] = 1;  /* opt-in feature, enabled for this test */
   cfg.checkin_interval_min = 60;
   cfg.checkin_remind_min = 5;
   cfg.checkin_grace_min = 10;

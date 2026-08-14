@@ -115,7 +115,9 @@ jerk ≥ motion_jerk_mg (default 60) between consecutive samples.
 - **THEN** stillness shorter than nonmotion_night_min does not trigger
 
 ### Requirement: Scheduled check-in requires a deliberate button press
-When enabled, the wearer SHALL receive a reminder (checkin_remind_min,
+Scheduled check-in SHALL default to disabled: it is the only detector
+that demands the wearer's attention while nothing is wrong, so it is
+opt-in. When enabled, the wearer SHALL receive a reminder (checkin_remind_min,
 default 5 min before due) and must press the check-in button within
 checkin_interval_min + checkin_grace_min (defaults 240 + 15 min). A
 missed deadline starts the ladder. Motion SHALL NOT satisfy a scheduled

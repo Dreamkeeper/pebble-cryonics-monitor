@@ -11,6 +11,10 @@
 #include "../core/protocol.h"
 
 static uint8_t s_debug;
+/* True when the worker launched us for an alert rather than the wearer
+ * opening the app. Such a launch must return the watch to the watchface
+ * as soon as the alert is over. */
+static bool s_launched_by_worker;
 #define DLOG(...) do { \
     if (s_debug) APP_LOG(APP_LOG_LEVEL_DEBUG, __VA_ARGS__); \
   } while (0)
@@ -170,6 +174,8 @@ static void show_alert(const cm_action *a) {
     send_to_phone(PMSG_CANCEL, a);
     vibes_cancel();
     if (s_alert_window) window_stack_remove(s_alert_window, true);
+    /* Nothing left to show: hand the screen back to the watchface. */
+    if (s_launched_by_worker) window_stack_pop_all(false);
     return;
   }
   if (!s_alert_window) {
@@ -332,7 +338,8 @@ static void init(void) {
   ensure_worker_running();
 
   /* Launched by the worker? Pick up the parked action immediately. */
-  if (launch_reason() == APP_LAUNCH_WORKER) {
+  s_launched_by_worker = (launch_reason() == APP_LAUNCH_WORKER);
+  if (s_launched_by_worker) {
     pickup_pending_action();
   }
   AppWorkerMessage m = {0};

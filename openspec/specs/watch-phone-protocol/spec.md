@@ -74,11 +74,30 @@ was missed. CANCEL retracts both at any point and carries the reason.
 - **THEN** the watch clears its ladder and replies with CANCEL
 - **AND** the phone retracts escalation exactly once
 
+### Requirement: Only attention-demanding events may take the screen
+Launching the foreground app hides whatever watchface the wearer chose,
+so the worker SHALL launch it only for events the wearer must see or act
+on immediately: CHECKIN_START, COUNTDOWN_START, ALARM, and
+CHECKIN_REMINDER (which occurs only when the wearer opted into scheduled
+check-ins). Informational events — ALERT_CANCELLED, NOTWORN_NAG,
+SUSPEND_EXPIRED, AUTO_RESUMED — SHALL be delivered by AppWorkerMessage
+only, reaching the app when it already happens to be open. An app
+launched by the worker SHALL return to the watchface once its alert
+ends. Consequence to accept: informational events are silent on the
+watch while the app is closed until the DataLogging→companion path
+lands (M0 spike S5), after which the phone delivers them.
+
+#### Scenario: A cancelled check-in does not hijack the watchface
+- **WHEN** motion dismisses a pulse-loss alert
+- **THEN** the watchface remains (or is restored) rather than the app
+  being launched to announce the cancellation
+
 ### Requirement: Worker alarms survive the launch gap
 Because the background worker cannot vibrate, draw UI, or send
-AppMessage, any user-facing action SHALL be parked in persist storage
-(PK_PENDING_ACTION=2) before `worker_launch_app()`; the foreground app
-consumes it on launch, or live via WMSG_ACTION if already open. Worker↔app
+AppMessage, any action that does launch the app SHALL be parked in
+persist storage (PK_PENDING_ACTION=2) before `worker_launch_app()`; the
+foreground app consumes it on launch, or live via WMSG_ACTION if already
+open. Worker↔app
 messages use AppWorkerMessage types: ACTION=1, USER_OK=2, SUSPEND=3,
 RESUME=4, SOS=5, STATUS_REQ=6, STATUS=7, SET_DEBUG=8. Persist keys:
 CONFIG=1, PENDING_ACTION=2, MODE=3, SUSPEND_UNTIL=4,

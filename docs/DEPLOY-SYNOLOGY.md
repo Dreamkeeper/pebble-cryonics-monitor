@@ -127,6 +127,63 @@ Companion pieces: the Android app has a **Debug mode** switch in settings
 pushes the toggle to the watch, whose debug output is readable with
 `pebble logs` over the developer connection.
 
+## Multi-wearer administration (server v0.2+)
+
+The server hosts multiple wearers (family / response group). Until the
+web dashboard lands, administration is curl against the API using
+`CM_ADMIN_TOKEN` from `.env`:
+
+```bash
+BASE=https://cm.example.com
+AUTH="Authorization: Bearer $CM_ADMIN_TOKEN"
+
+# Create a wearer and hand them an enrollment code (shown once, 24 h TTL,
+# single use — the Android app exchanges it for its own token):
+curl -sX POST $BASE/api/v1/admin/wearers -H "$AUTH" \
+     -H 'Content-Type: application/json' -d '{"id":"alice","name":"Alice"}'
+curl -sX POST $BASE/api/v1/admin/wearers/alice/enroll-code -H "$AUTH"
+
+# Contacts and tiers for any wearer (wearers manage their own from the
+# app with their own token; admin uses ?wearer_id=):
+curl -sX POST "$BASE/api/v1/contacts?wearer_id=alice" -H "$AUTH" \
+     -H 'Content-Type: application/json' \
+     -d '{"name":"Bob","telegram_chat_id":"123456789","tier_name":"primary"}'
+curl -s "$BASE/api/v1/contacts?wearer_id=alice" -H "$AUTH"
+
+# Fleet status (all wearers) vs a wearer's own status:
+curl -s $BASE/api/v1/status -H "$AUTH"
+```
+
+**DEGRADED**: a wearer with no contact that has at least one channel
+address cannot escalate to anyone. Their own status says so
+(`"degraded": true`) and the public `/api/v1/health` reports only a
+count (`wearers_degraded`) — never names. Fix it by adding a contact;
+no restart needed.
+
+**Upgrading an existing single-token deployment**: keep `CM_API_TOKEN`
+in `.env` for the first boot — the server migrates it into wearer
+`default` automatically and the already-configured phone keeps working.
+
+## Backing up the database
+
+State (wearers, contacts, escalations, ACK tokens, event log) lives in
+`CM_DATA_DIR/cryomonitor.db` with SQLite WAL. Never copy the live
+`*.db`/`-wal`/`-shm` files directly. Either stop the container and copy,
+or take an online-consistent snapshot:
+
+```bash
+docker exec cryomonitor-monitor-1 python - <<'PY'
+import sqlite3
+src = sqlite3.connect("/srv/data/cryomonitor.db")
+dst = sqlite3.connect("/srv/data/backup-cryomonitor.db")
+src.backup(dst); dst.close(); src.close()
+PY
+```
+
+then archive `backup-cryomonitor.db` off the volume. Add this to the
+NAS's daily backup task; the deployment is not production-trustworthy
+until restarts AND disk loss are both survivable.
+
 ## Notes
 
 - Data is currently in-memory (v0.1 scaffold); SQLite persistence lands in

@@ -29,6 +29,12 @@ class Contact:
     id: str
     name: str
     channels: tuple[str, ...]  # e.g. ("telegram", "email", "ntfy")
+    # Channel addressing, snapshotted at escalation creation:
+    # (("telegram", "<chat_id>"), ("email", "<addr>"), ...). The engine
+    # never reads it; the delivery layer does. Kept here so one snapshot
+    # captures everything an escalation needs to run to completion even
+    # if the wearer's live contacts are edited mid-alarm.
+    addresses: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -122,7 +128,7 @@ class Escalation:
 
     def step(self, t: float) -> list[Send]:
         """Return sends due at time ``t`` and handle tier promotion."""
-        if self.resolved:
+        if self.resolved or not self.tiers:
             return []
 
         # Promote the next tier if the newest active tier is unacked too long.
@@ -150,3 +156,62 @@ class Escalation:
         return [Send(contact=cs.contact, channel=ch, tier=cs.tier,
                      kind=self.kind, attempt=cs.attempts + 1)
                 for ch in cs.contact.channels]
+
+    # -- pure snapshot/restore (no IO; the store persists the dict) --
+
+    def to_state(self) -> dict:
+        return {
+            "kind": self.kind.value,
+            "detector": self.detector,
+            "location": self.location,
+            "started_t": self.started_t,
+            "resolved": self.resolved,
+            "resolution": self.resolution,
+            "tiers": [
+                {"name": tr.name,
+                 "repeat_after_s": tr.repeat_after_s,
+                 "promote_after_s": tr.promote_after_s,
+                 "contacts": [
+                     {"id": c.id, "name": c.name,
+                      "channels": list(c.channels),
+                      "addresses": [list(a) for a in c.addresses]}
+                     for c in tr.contacts]}
+                for tr in self.tiers],
+            "activated_tiers": sorted(self._activated_tiers),
+            "contact_states": [
+                {"contact_id": cs.contact.id, "tier": cs.tier,
+                 "first_due_t": cs.first_due_t, "acked": cs.acked,
+                 "attempts": cs.attempts, "last_sent_t": cs.last_sent_t}
+                for cs in self._contacts],
+        }
+
+    @classmethod
+    def from_state(cls, state: dict) -> "Escalation":
+        tiers = [
+            Tier(name=tr["name"],
+                 contacts=[Contact(id=c["id"], name=c["name"],
+                                   channels=tuple(c["channels"]),
+                                   addresses=tuple(tuple(a) for a in
+                                                   c.get("addresses", [])))
+                           for c in tr["contacts"]],
+                 repeat_after_s=tr["repeat_after_s"],
+                 promote_after_s=tr["promote_after_s"])
+            for tr in state["tiers"]]
+        esc = cls.__new__(cls)
+        esc.kind = AlertKind(state["kind"])
+        esc.tiers = tiers
+        esc.started_t = state["started_t"]
+        esc.detector = state["detector"]
+        esc.location = state["location"]
+        esc.resolved = state["resolved"]
+        esc.resolution = state["resolution"]
+        esc._activated_tiers = set(state["activated_tiers"])
+        by_id = {c.id: (c, tr.name) for tr in tiers for c in tr.contacts}
+        esc._contacts = []
+        for cs in state["contact_states"]:
+            contact, _tier = by_id[cs["contact_id"]]
+            esc._contacts.append(_ContactState(
+                contact=contact, tier=cs["tier"],
+                first_due_t=cs["first_due_t"], acked=cs["acked"],
+                attempts=cs["attempts"], last_sent_t=cs["last_sent_t"]))
+        return esc

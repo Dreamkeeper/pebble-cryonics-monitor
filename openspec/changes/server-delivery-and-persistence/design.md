@@ -45,8 +45,11 @@ writes). Multi-wearer stays comfortably inside SQLite's envelope: a
 response group is tens of wearers, not thousands.
 
 **D2 — Snapshot-restore, not event-sourcing.** Each `Escalation`
-serializes to a row (wearer id, kind, tier config snapshot, started_t,
-resolution) plus per-contact rows (attempts, last_sent_t, acked). On
+serializes to one row (wearer id, resolved flag, started_t for
+indexing) whose payload is the full `to_state()` JSON snapshot — tier
+config and per-contact attempts/acks included. One blob per escalation
+is atomic by construction; per-contact rows were considered and dropped
+because nothing queries contact state outside its escalation. On
 startup, rows rehydrate into `Escalation` instances per wearer and the
 pump resumes stepping them with `time.time()` — elapsed downtime counts
 naturally, satisfying "no clock reset" with zero replay logic. The tier
@@ -71,9 +74,11 @@ inbound route. Offset persisted so restarts do not replay updates.
 
 **D5 — Channels get real async transport via `asyncio.to_thread` around
 the existing blocking clients.** Zero new dependencies. Each `deliver()`
-returns accepted/failed; the pump maps accepted → `record_sent`, failed
-→ left unsent so the repeat cadence retries. Per-send timeout inside the
-channel.
+returns accepted/failed; the pump records the attempt for every due
+contact either way — an unsent contact would come due again every pump
+cycle and hammer a failing transport, so failures advance the clock too
+and the retry lands on the tier's repeat cadence. Per-send timeout
+inside the channel.
 
 **D6 — Contacts and tiers live in the store, managed via API.** CRUD
 endpoints under `/api/v1/contacts` + `/api/v1/tiers` (wearer token =

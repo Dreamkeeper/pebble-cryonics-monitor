@@ -76,9 +76,11 @@ the public health endpoint only as a count, never a name.
 
 ### Requirement: Wearers may receive copies of their own escalations
 A wearer with self-notification addresses configured (Telegram chat id,
-ntfy topic, and/or email on the wearer record) SHALL receive a copy of
-each notification sent for their own escalations, clearly labeled as a
-copy to the wearer. Configuring an address is the opt-in; removing it
+ntfy topic, and/or email on the wearer record) SHALL receive one labeled
+copy per delivery cycle of their own escalations, summarizing which
+contacts were notified on which channels (a literal copy of every
+individual send would multiply into alert fatigue — N contacts × M
+channels per cycle). Configuring an address is the opt-in; removing it
 is the opt-out. Wearer copies SHALL carry no acknowledge affordance and
 SHALL never satisfy ACK gating — awareness is not response. Copies are
 sent for all alert kinds including phone-silent advisories (their main

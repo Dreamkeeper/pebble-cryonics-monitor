@@ -1,77 +1,76 @@
-import os
-
-os.environ["CM_DISABLE_PUMP"] = "1"
-os.environ["CM_API_TOKEN"] = "testtoken"
-
-from fastapi.testclient import TestClient
-
-from app import main
-from app.main import app
-
-client = TestClient(app)
+"""Phone-facing API surface: auth, health/status exposure, alarm lifecycle."""
+from conftest import admin_headers, wearer_headers
 
 
-def test_heartbeat_roundtrip():
-    r = client.post("/api/v1/heartbeat",
-                    json={"token": "testtoken", "phone_battery_pct": 77})
-    assert r.status_code == 200
-    assert r.json()["state"] == "ok"
-
-
-def test_bad_token_rejected():
-    r = client.post("/api/v1/heartbeat", json={"token": "wrong"})
-    assert r.status_code == 401
-
-
-def test_alarm_creates_escalation_and_resolve():
-    r = client.post("/api/v1/alarm",
-                    json={"token": "testtoken", "detector": "impact",
-                          "lat": 52.52, "lon": 13.405})
-    assert r.status_code == 200
-    esc_id = r.json()["escalation_id"]
-    assert esc_id in main.active_escalations
-
-    s = client.get("/api/v1/status", params={"token": "testtoken"}).json()
-    assert s["active_escalations"][esc_id]["detector"] == "impact"
-
-    r = client.post(f"/api/v1/alarm/{esc_id}/resolve",
-                    params={"resolution": "false_alarm", "token": "testtoken"})
-    assert r.status_code == 200
-    assert main.active_escalations[esc_id].resolved
-
-
-def test_health_is_public_and_leaks_nothing():
-    r = client.get("/api/v1/health")
+def test_health_is_public_and_leaks_nothing(appenv):
+    r = appenv.client.get("/api/v1/health")
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok"
-    # no wearer data may appear in the public probe
-    assert set(body) == {"status", "service", "version"}
+    # count-only degradation signal; never names or ids
+    assert set(body) == {"status", "service", "version", "wearers_degraded"}
 
 
-def test_status_requires_token():
-    assert client.get("/api/v1/status").status_code == 401
-    assert client.get("/api/v1/status",
-                      params={"token": "testtoken"}).status_code == 200
+def test_status_requires_token(appenv):
+    assert appenv.client.get("/api/v1/status").status_code == 401
+    r = appenv.client.get("/api/v1/status", headers=wearer_headers())
+    assert r.status_code == 200
+    assert r.json()["phone"] == "ok"
 
 
-def test_bearer_header_authenticates_without_query_token():
-    """Tokens must not need to appear in URLs (they land in access logs)."""
-    h = {"Authorization": "Bearer testtoken"}
-    assert client.get("/api/v1/status", headers=h).status_code == 200
-    assert client.post("/api/v1/heartbeat", json={}, headers=h).status_code == 200
-    assert client.post("/api/v1/alarm", json={"detector": "impact"},
-                       headers=h).status_code == 200
+def test_bearer_and_legacy_query_token_both_work(appenv):
+    ok = appenv.client.post("/api/v1/heartbeat",
+                            json={"phone_battery_pct": 70},
+                            headers=wearer_headers())
+    assert ok.status_code == 200
+    legacy = appenv.client.post("/api/v1/heartbeat",
+                                json={"token": "testtoken",
+                                      "phone_battery_pct": 70})
+    assert legacy.status_code == 200
 
 
-def test_bad_bearer_header_rejected():
-    for bad in ["Bearer wrong", "Basic testtoken", "testtoken", ""]:
-        r = client.get("/api/v1/status", headers={"Authorization": bad})
-        assert r.status_code == 401, bad
+def test_bad_credentials_rejected(appenv):
+    for hdr in ["Bearer wrong", "Basic testtoken", "testtoken", ""]:
+        r = appenv.client.get("/api/v1/status",
+                              headers={"Authorization": hdr})
+        assert r.status_code == 401, hdr
 
 
-def test_offline_window():
-    r = client.post("/api/v1/offline-window",
-                    json={"token": "testtoken", "duration_s": 3600})
+def test_alarm_lifecycle(appenv):
+    r = appenv.client.post("/api/v1/alarm",
+                           json={"detector": "impact", "lat": 52.5, "lon": 13.4},
+                           headers=wearer_headers())
+    assert r.status_code == 200
+    esc_id = r.json()["escalation_id"]
+
+    s = appenv.client.get("/api/v1/status", headers=wearer_headers()).json()
+    assert esc_id in s["active_escalations"]
+    assert s["active_escalations"][esc_id]["detector"] == "impact"
+
+    r = appenv.client.post(f"/api/v1/alarm/{esc_id}/resolve",
+                           params={"resolution": "false_alarm"},
+                           headers=wearer_headers())
+    assert r.status_code == 200
+    s = appenv.client.get("/api/v1/status", headers=wearer_headers()).json()
+    assert esc_id not in s["active_escalations"]
+
+
+def test_offline_window(appenv):
+    r = appenv.client.post("/api/v1/offline-window",
+                           json={"duration_s": 3600},
+                           headers=wearer_headers())
     assert r.status_code == 200
     assert r.json()["state"] == "offline_declared"
+
+
+def test_admin_status_lists_all_wearers(appenv):
+    r = appenv.client.get("/api/v1/status", headers=admin_headers())
+    assert r.status_code == 200
+    ids = [w["id"] for w in r.json()["wearers"]]
+    assert "default" in ids  # legacy bootstrap wearer
+
+
+def test_admin_cannot_use_phone_endpoints(appenv):
+    r = appenv.client.post("/api/v1/heartbeat", json={},
+                           headers=admin_headers())
+    assert r.status_code == 403

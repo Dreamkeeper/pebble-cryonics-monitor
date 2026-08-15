@@ -44,3 +44,4 @@ watchapp/tests/*.obj
 !dist/*.pbw
 !dist/*.apk
 watchapp/.lock-waf*
+tokens.txt

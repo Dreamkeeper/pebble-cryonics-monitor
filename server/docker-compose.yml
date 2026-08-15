@@ -23,8 +23,18 @@ services:
       CM_SMTP_FROM: ${CM_SMTP_FROM:-}
       CM_NTFY_URL: ${CM_NTFY_URL:-https://ntfy.sh}
       CM_ENROLL_TTL_S: ${CM_ENROLL_TTL_S:-86400}
+      # Optional outbound HTTP(S) proxy for Telegram/ntfy.sh API calls —
+      # needed where api.telegram.org is blocked (set e.g.
+      # CM_OUTBOUND_PROXY=http://xray-client:1083). urllib honors these.
+      HTTPS_PROXY: ${CM_OUTBOUND_PROXY:-}
+      HTTP_PROXY: ${CM_OUTBOUND_PROXY:-}
+      NO_PROXY: ${CM_NO_PROXY:-ntfy,localhost,127.0.0.1}
       # Debug mode: set to DEBUG in .env for extensive logs
       CM_LOG_LEVEL: ${CM_LOG_LEVEL:-INFO}
+    # If the proxy runs in another compose project, attach its network:
+    #   networks: [default, proxynet]
+    # and declare at top level:
+    #   networks: { proxynet: { external: true, name: <proxy-net-name> } }
     volumes:
       - ./data:/srv/data
 

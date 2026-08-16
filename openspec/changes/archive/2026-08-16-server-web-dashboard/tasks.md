@@ -41,12 +41,12 @@
       touched, `pebble clean && pebble build`)
 - [x] 4.2 Docs: DEPLOY-SYNOLOGY gains UI bootstrap env keys, first
       login, account management, and login-hardening notes
-- [ ] 4.3 Deploy to DKNexus (documented no-sudo path); bootstrap admin;
+- [x] 4.3 Deploy to DKNexus (documented no-sudo path); bootstrap admin;
       create a responder account; verify fleet view over
       https://cm.dkvasnikov.ru/ui/ from outside the LAN
-- [ ] 4.4 Live drill: fire drill from the UI, acknowledge from the UI,
+- [x] 4.4 Live drill: fire drill from the UI, acknowledge from the UI,
       resolve with reason; verify audit entries and that CM_ADMIN_TOKEN
       is refused post-bootstrap
-- [ ] 4.5 Log deployment in `HOMELAB-INFRASTRUCTURE-STATE.md`
-- [ ] 4.6 Sync deltas (incl. superseding wearer-management's env-admin
+- [x] 4.5 Log deployment in `HOMELAB-INFRASTRUCTURE-STATE.md`
+- [x] 4.6 Sync deltas (incl. superseding wearer-management's env-admin
       requirement) and archive the change

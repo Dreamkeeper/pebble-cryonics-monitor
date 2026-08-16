@@ -29,6 +29,13 @@ services:
       HTTPS_PROXY: ${CM_OUTBOUND_PROXY:-}
       HTTP_PROXY: ${CM_OUTBOUND_PROXY:-}
       NO_PROXY: ${CM_NO_PROXY:-ntfy,localhost,127.0.0.1}
+      # Web dashboard: first-boot admin bootstrap (remove after first
+      # login) and UI behavior knobs.
+      CM_UI_ADMIN_USER: ${CM_UI_ADMIN_USER:-}
+      CM_UI_ADMIN_PASSWORD: ${CM_UI_ADMIN_PASSWORD:-}
+      CM_SESSION_TTL_S: ${CM_SESSION_TTL_S:-604800}
+      CM_UI_REFRESH_S: ${CM_UI_REFRESH_S:-15}
+      CM_UI_INSECURE_COOKIES: ${CM_UI_INSECURE_COOKIES:-}
       # Debug mode: set to DEBUG in .env for extensive logs
       CM_LOG_LEVEL: ${CM_LOG_LEVEL:-INFO}
     # If the proxy runs in another compose project, attach its network:

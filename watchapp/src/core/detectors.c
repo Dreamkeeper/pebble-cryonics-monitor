@@ -52,7 +52,7 @@ void cm_config_defaults(cm_config *cfg) {
   cfg->night_start_hour = 23;
   cfg->night_end_hour = 7;
 
-  cfg->notworn_after_min = 15;
+  cfg->notworn_after_min = 3;
 
   cfg->checkin_interval_min = 240;
   cfg->checkin_remind_min = 5;
@@ -64,6 +64,10 @@ void cm_config_defaults(cm_config *cfg) {
   cfg->countdown_sos_s = 5;
 
   cfg->resume_motion_s = 15;
+  cfg->resume_grace_s = 60;
+
+  cfg->pulse_proof_min = 5;
+  cfg->removal_window_s = 45;
 }
 
 void cm_init(cm_core *c, const cm_config *cfg, uint32_t now_ms) {
@@ -248,14 +252,20 @@ static void tick_suspension(cm_core *c) {
   }
 
   if (c->suspend_auto_resume) {
+    /* Arming delay: the wearer is usually still wearing (or handling) the
+     * watch in the first moments of a suspension — those signals must not
+     * resume it. Pulse is deliberately NOT a resume signal at all: the
+     * optical sensor phantom-reads when pressed against a surface, so
+     * sustained motion is the only trusted "back on the wrist" evidence. */
+    if (elapsed(c->now_ms, c->suspend_start_ms) <
+        (uint32_t)c->cfg.resume_grace_s * 1000u) {
+      c->suspend_motion_run_s = 0;
+      return;
+    }
     if (c->motion_this_second) c->suspend_motion_run_s++;
     else c->suspend_motion_run_s = 0;
 
-    /* only a pulse seen AFTER suspension began counts as "back on wrist" */
-    int pulse_back = c->cfg.hr_available && c->ever_pulse &&
-                     (int32_t)(c->last_pulse_ms - c->suspend_start_ms) > 0 &&
-                     elapsed(c->now_ms, c->last_pulse_ms) < 5000u;
-    if (c->suspend_motion_run_s >= c->cfg.resume_motion_s || pulse_back) {
+    if (c->suspend_motion_run_s >= c->cfg.resume_motion_s) {
       c->suspended = 0;
       c->last_motion_ms = c->now_ms;
       c->last_pulse_ms = c->now_ms;
@@ -279,6 +289,17 @@ static void tick_ladder(cm_core *c) {
   }
 }
 
+/* Removal vs. arrest: a dead wearer does not move after the pulse stops;
+ * removing a watch necessarily moves it. Evaluated only at hunt-trigger
+ * time (wearer still, pulse long gone), so "motion shortly AFTER the last
+ * valid pulse, then stillness" is the removal signature — such an episode
+ * belongs to the not-worn nag, not the alarm ladder. */
+static int removal_suspected(const cm_core *c) {
+  return (int32_t)(c->last_motion_ms - c->last_pulse_ms) > 0 &&
+         (uint32_t)(c->last_motion_ms - c->last_pulse_ms) <=
+             (uint32_t)c->cfg.removal_window_s * 1000u;
+}
+
 static void tick_pulse(cm_core *c) {
   if (!c->cfg.enabled[CM_DET_PULSE] || !c->cfg.hr_available || !c->ever_pulse) return;
   if (c->stage != CM_STAGE_NONE || c->suspended) return;
@@ -291,6 +312,7 @@ static void tick_pulse(cm_core *c) {
     if (worn_recently(c) &&
         since_pulse >= (uint32_t)c->cfg.pulse_lost_after_s * 1000u &&
         since_motion >= (uint32_t)c->cfg.pulse_still_s * 1000u) {
+      if (removal_suspected(c)) return; /* not-worn nag owns this episode */
       c->pulse_phase = 1;
       c->hunt_start_ms = c->now_ms;
       emit(c, CM_ACT_HR_BURST_ON, CM_DET_PULSE, 0, c->cfg.pulse_hunt_s);
@@ -325,6 +347,13 @@ static void tick_nonmotion(cm_core *c) {
   if (!c->cfg.enabled[CM_DET_NONMOTION] || c->suspended) return;
   if (c->stage != CM_STAGE_NONE || !c->nonmotion_armed) return;
   if (!worn_recently(c)) return; /* off-wrist is the not-worn detector's job */
+  /* A live pulse is proof of life: stillness alone (sleep, meditation,
+   * TV) must never ping the wearer on HR hardware. Non-motion remains
+   * only as the backstop for a silently failing HR sensor — the band
+   * where the pulse went stale but the worn grace has not lapsed. */
+  if (c->cfg.hr_available && c->ever_pulse &&
+      elapsed(c->now_ms, c->last_pulse_ms) <
+          (uint32_t)c->cfg.pulse_proof_min * 60000u) return;
 
   uint16_t mins = is_night(c) ? c->cfg.nonmotion_night_min : c->cfg.nonmotion_day_min;
   if (elapsed(c->now_ms, c->last_motion_ms) >= (uint32_t)mins * 60000u) {
@@ -354,6 +383,7 @@ static void tick_checkin(cm_core *c) {
 static void tick_notworn(cm_core *c) {
   if (!c->cfg.enabled[CM_DET_NOTWORN] || !c->cfg.hr_available || !c->ever_pulse) return;
   if (c->suspended || c->notworn_nagged || c->stage != CM_STAGE_NONE) return;
+  if (c->pulse_phase != 0) return; /* a pulse hunt is running: let it conclude */
 
   uint32_t th = (uint32_t)c->cfg.notworn_after_min * 60000u;
   if (elapsed(c->now_ms, c->last_pulse_ms) >= th &&

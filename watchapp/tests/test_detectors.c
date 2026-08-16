@@ -141,6 +141,10 @@ static void test_defaults(void) {
   CHECK(cfg.nonmotion_day_min == 40);
   CHECK(cfg.nonmotion_night_min == 90);
   CHECK(cfg.countdown_impact_s < cfg.countdown_s); /* impacts get a faster fuse */
+  CHECK(cfg.notworn_after_min == 3);   /* removal nags fast, never contacts */
+  CHECK(cfg.pulse_proof_min == 5);     /* live pulse = proof of life */
+  CHECK(cfg.removal_window_s == 45);   /* motion-after-pulse = removal */
+  CHECK(cfg.resume_grace_s == 60);     /* auto-resume arming delay */
   /* Scheduled check-in is opt-in; every passive detector is on by default. */
   CHECK(cfg.enabled[CM_DET_CHECKIN] == 0);
   for (int i = 0; i < CM_DET_COUNT; i++)
@@ -314,13 +318,12 @@ static void test_nonmotion_daytime(void) {
   cm_config cfg = test_cfg();
   cfg.enabled[CM_DET_PULSE] = 0;   /* isolate the non-motion detector */
   cfg.enabled[CM_DET_NOTWORN] = 0;
+  cfg.hr_available = 0;            /* flint/gabbro: motion is the only signal */
   setup(&cfg);
   warmup();
 
-  /* keep pulse alive (worn) but perfectly still for 40 min */
-  for (int i = 0; i < 40 * 60; i++) {
-    if (i % 60 == 0) sec_still_hr(64); else sec_still();
-  }
+  /* perfectly still for 40 min on motion-only hardware */
+  mins_still(40);
   const cm_action *ci = find_type(CM_ACT_CHECKIN_START);
   CHECK(ci != 0);
   CHECK(ci && ci->detector == CM_DET_NONMOTION);
@@ -337,19 +340,60 @@ static void test_nonmotion_night_threshold(void) {
   cm_config cfg = test_cfg();
   cfg.enabled[CM_DET_PULSE] = 0;
   cfg.enabled[CM_DET_NOTWORN] = 0;
+  cfg.hr_available = 0;
   setup(&cfg);
   warmup();
   sim_hour = 2; /* night */
 
-  for (int i = 0; i < 60 * 60; i++) { /* 60 min: under the 90 min night limit */
-    if (i % 60 == 0) sec_still_hr(58); else sec_still();
+  mins_still(60);  /* under the 90 min night limit */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+
+  mins_still(31);  /* now past 90 min */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 1);
+}
+
+/* The wearer's scenario: sleeping / meditating / watching TV. Perfectly
+ * still with a live pulse must NEVER ping on HR hardware — the pulse IS
+ * the proof of life. */
+static void test_still_with_pulse_stays_silent(void) {
+  g_test = "still_with_pulse_stays_silent";
+  cm_config cfg = test_cfg();
+  cfg.pulse_lost_after_s = 150;  /* realistic default: 60 s samples are fresh */
+  setup(&cfg);
+  warmup();
+
+  for (int i = 0; i < 50 * 60; i++) {   /* 50 min, well past day threshold */
+    if (i % 60 == 0) sec_still_hr(62); else sec_still();
+  }
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 0);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 0);
+  CHECK(count_type(CM_ACT_ALARM) == 0);
+}
+
+/* Backstop band: the HR sensor silently stops reading mid-sleep. Once the
+ * pulse is staler than pulse_proof_min (but inside the worn grace), the
+ * accumulated stillness may ping. */
+static void test_nonmotion_backstop_stale_pulse(void) {
+  g_test = "nonmotion_backstop_stale_pulse";
+  cm_config cfg = test_cfg();
+  cfg.enabled[CM_DET_PULSE] = 0;   /* isolate from the pulse ladder */
+  cfg.enabled[CM_DET_NOTWORN] = 0;
+  setup(&cfg);
+  warmup();
+
+  for (int i = 0; i < 36 * 60; i++) {   /* still, pulse alive: silent */
+    if (i % 60 == 0) sec_still_hr(60); else sec_still();
   }
   CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
 
-  for (int i = 0; i < 31 * 60; i++) { /* now past 90 min */
-    if (i % 60 == 0) sec_still_hr(58); else sec_still();
-  }
-  CHECK(count_type(CM_ACT_CHECKIN_START) == 1);
+  mins_still(4);                        /* pulse now stale, proof holds */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+
+  mins_still(2);                        /* proof lapsed, worn grace not yet */
+  const cm_action *ci = find_type(CM_ACT_CHECKIN_START);
+  CHECK(ci != 0);
+  CHECK(ci && ci->detector == CM_DET_NONMOTION);
 }
 
 static void test_notworn_nag_not_alarm(void) {
@@ -454,8 +498,10 @@ static void test_suspension_expiry(void) {
   CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
 }
 
-static void test_suspension_pulse_autoresume(void) {
-  g_test = "suspension_pulse_autoresume";
+/* Pulse is NOT a resume signal: the optical sensor phantom-reads when the
+ * watch lies face-down or is pressed against a surface. */
+static void test_suspension_pulse_does_not_resume(void) {
+  g_test = "suspension_pulse_does_not_resume";
   cm_config cfg = test_cfg();
   setup(&cfg);
   warmup();
@@ -465,9 +511,59 @@ static void test_suspension_pulse_autoresume(void) {
   log_reset();
 
   mins_still(10);
-  sec_still_hr(75); /* pulse seen: watch is back on the wrist */
-  sec_still();
+  for (int i = 0; i < 30; i++) sec_still_hr(75); /* phantom "pulse" on a shelf */
+  CHECK(count_type(CM_ACT_AUTO_RESUMED) == 0);
+  CHECK(cm_suspend_remaining_s(&core, now_ms) > 0);
+
+  /* sustained motion is the only trusted wear evidence */
+  for (int i = 0; i < 16; i++) sec_moving();
   CHECK(count_type(CM_ACT_AUTO_RESUMED) == 1);
+}
+
+/* The T4 field bug: pressing "suspend" while still wearing the watch used
+ * to auto-resume within a second (fresh pulse). The arming grace must
+ * swallow all signals — including continuous motion — for resume_grace_s. */
+static void test_suspension_grace_blocks_instant_resume(void) {
+  g_test = "suspension_grace_blocks_instant_resume";
+  cm_config cfg = test_cfg();
+  setup(&cfg);
+  warmup();
+
+  cm_suspend(&core, 1800, 1, now_ms);
+  drain();
+  log_reset();
+
+  for (int i = 0; i < 50; i++) sec_moving();  /* wearer walks off, watch on */
+  CHECK(count_type(CM_ACT_AUTO_RESUMED) == 0);
+
+  for (int i = 0; i < 30; i++) sec_moving();  /* grace over: 15 s run resumes */
+  CHECK(count_type(CM_ACT_AUTO_RESUMED) == 1);
+  CHECK(cm_suspend_remaining_s(&core, now_ms) == 0);
+}
+
+/* Removal signature: motion right after the last pulse, then stillness —
+ * this must go to the not-worn nag, never the alarm ladder. */
+static void test_removal_goes_to_nag_not_ladder(void) {
+  g_test = "removal_goes_to_nag_not_ladder";
+  cm_config cfg = test_cfg();
+  cfg.notworn_after_min = 3;
+  setup(&cfg);
+  warmup();
+
+  for (int i = 0; i < 10; i++) sec_moving(); /* unbuckle, set on the table */
+  mins_still(2);
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 0);   /* no silent hunt */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0); /* no ladder */
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 0);   /* not yet: under 3 min */
+
+  mins_still(2);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 1);   /* nag at ~3 min */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_ALARM) == 0);
+
+  mins_still(10);                               /* once per episode */
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 1);
+  CHECK(count_type(CM_ACT_ALARM) == 0);
 }
 
 static void test_manual_sos(void) {
@@ -517,11 +613,15 @@ int main(void) {
   test_pulse_user_cancel_snoozes();
   test_nonmotion_daytime();
   test_nonmotion_night_threshold();
+  test_still_with_pulse_stays_silent();
+  test_nonmotion_backstop_stale_pulse();
   test_notworn_nag_not_alarm();
+  test_removal_goes_to_nag_not_ladder();
   test_scheduled_checkin();
   test_suspension_blocks_and_autoresumes();
   test_suspension_expiry();
-  test_suspension_pulse_autoresume();
+  test_suspension_pulse_does_not_resume();
+  test_suspension_grace_blocks_instant_resume();
   test_manual_sos();
   test_hr_unavailable_hardware();
 

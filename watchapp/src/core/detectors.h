@@ -21,9 +21,15 @@
  * motion/pulse auto-dismisses except for scheduled check-ins) -> COUNTDOWN
  * (explicit button only) -> ALARM (latched until cm_user_ok).
  *
- * Known v1 limitation: taking the watch off without suspending looks like
- * pulse loss for up to cfg.pulse_worn_grace_min. The ladder + phone cancel
- * absorb it; removal-gesture discrimination is a v2 refinement.
+ * Removal vs. arrest discrimination: a dead wearer does not move after the
+ * pulse stops, while removing a watch necessarily moves it. Motion observed
+ * within removal_window_s AFTER the last valid pulse therefore classifies a
+ * signal loss as "probably taken off" — routed to the not-worn nag (wearer
+ * only, default 3 min) instead of the alarm ladder. Loss with no motion
+ * after the last pulse keeps the full ladder (possible arrest). Documented
+ * residual risks: a collapse whose motion lands just after the last pulse
+ * reading is mis-read as removal (the impact detector covers falls), and a
+ * perfectly gentle removal still runs the ladder (phone cancel absorbs it).
  *
  * Timestamps are uint32 milliseconds and wrap-safe for spans < 24 days.
  */
@@ -131,8 +137,19 @@ typedef struct {
   uint16_t countdown_impact_s;    /* faster fuse for impacts (default 20) */
   uint16_t countdown_sos_s;       /* mis-press protection for manual SOS (default 5) */
 
-  /* Suspension auto-resume */
+  /* Suspension auto-resume (accelerometer only: the optical HR sensor
+   * phantom-reads when pressed against a surface, so pulse is not a
+   * trusted wear signal here) */
   uint16_t resume_motion_s;       /* consecutive seconds of motion (default 15) */
+  uint16_t resume_grace_s;        /* signals ignored this long after the
+                                     suspension starts (default 60) */
+
+  /* Wear discrimination */
+  uint16_t pulse_proof_min;       /* valid pulse within this = proof of life:
+                                     suppresses non-motion pings (default 5) */
+  uint16_t removal_window_s;      /* motion within this after the last valid
+                                     pulse classifies signal loss as removal,
+                                     not arrest (default 45) */
 } cm_config;
 
 typedef struct {

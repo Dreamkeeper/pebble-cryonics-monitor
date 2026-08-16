@@ -48,10 +48,11 @@ Reading the phone notification: `watch ✓ 87% · synced 4m ago · server ✓`
 
 **Pass:** every step; nothing requires SSH, curl, or a manual page reload.
 
-> Xiaomi/HyperOS: for the lock-screen takeover, the app needs
-> *Settings → Apps → Cryonics Monitor → Other permissions → "Show on
-> lock screen"* and ideally *"Display pop-up windows while running in
-> the background"*. The siren and heads-up work without them.
+> Xiaomi/HyperOS: for the lock-screen takeover, use the in-app button
+> **"Allow alarm over the lock screen"** (main screen → Setup) — it
+> opens the right permission page; enable *"Show on lock screen"* and
+> *"Display pop-up windows while running in the background"*. The siren
+> and heads-up work without them.
 
 ## T3 — Ghost-launch regression (3 min)
 
@@ -71,28 +72,37 @@ NOT trigger the alarm ladder — an off-wrist watch routes to the
 
 **Pass:** watchface visible after implicit cancellation, no ghost screen.
 
-## T3b — Not-worn nag (15+ min, can run in the background of other tests)
+## T3b — Not-worn nag (≈4 min)
 
-1. Take the watch off and leave it still (e.g. on a table). Do not
-   suspend.
-2. After **15 minutes** (`notworn_after_min`, not 3!): the watch
-   vibrates and shows "Not worn?", and the phone posts a FAULT-channel
-   notification saying monitoring is blind. No Telegram, no escalation.
+1. Take the watch off normally (unbuckle, set it on a table). Do not
+   suspend. The handling motion right after your last pulse reading is
+   what tells the watch "removed, not arrested" — so no alarm ladder.
+2. After **~3–4 minutes**: the watch vibrates and shows "Not worn?",
+   and the phone posts a FAULT-channel notification saying monitoring
+   is blind. No Telegram, no escalation.
 3. Put the watch back on (or press UP to suspend properly). The nag
    clears on the next pulse reading.
 
-**Pass:** nag at ~15 min on both watch and phone; contacts never hear
-about it.
+**Pass:** nag within ~4 min on both watch and phone; contacts never
+hear about it.
+
+## T3c — Still with a live pulse stays silent (passive, evening-length)
+
+Wear the watch and be still for 45+ minutes (TV, reading). Expected:
+**nothing** — no check-in, no vibration. A visible pulse is proof of
+life; stillness alone never pings on HR hardware.
 
 ## T4 — Suspension (3 min)
 
 1. Watchapp → UP button: suspend 30 min. Expected within ~10 s: the
-   phone notification gains a `SUSPENDED 30m ·` prefix; the watch status
-   line counts the remaining minutes down.
-2. Take the watch off for ~1 min, put it back on and **walk for at least
-   15–20 seconds continuously** (auto-resume wants 15 consecutive
-   seconds of motion, or a fresh pulse reading — HR samples only every
-   60 s, so motion is the fast path).
+   phone notification gains a `SUSPENDED 30m ·` prefix; the watch shows
+   "Suspended 30 min" and holds it a full minute before "29" (minutes
+   round up). Nothing you do in the **first 60 s** can resume it — the
+   arming grace absorbs strap handling and table placement.
+2. Take the watch off for ~2 min, put it back on and **walk for at
+   least 15–20 seconds continuously**. Auto-resume is
+   accelerometer-only: pulse readings never resume (the optical sensor
+   phantom-reads against surfaces).
 3. Expected: double-pulse vibration; watch status returns to
    "Monitoring"; the phone's `SUSPENDED` prefix disappears.
 

@@ -63,10 +63,11 @@ static uint32_t now_ms(void) {
 }
 
 static void push_status_to_app(void) {
+  /* Minutes round UP: a fresh 30-min suspension reads "30", not "29". */
   AppWorkerMessage m = {
     .data0 = (uint16_t)cm_current_stage(&s_core),
     .data1 = 0, /* TODO: cache last bpm */
-    .data2 = (uint16_t)(cm_suspend_remaining_s(&s_core, now_ms()) / 60u),
+    .data2 = (uint16_t)((cm_suspend_remaining_s(&s_core, now_ms()) + 59u) / 60u),
   };
   app_worker_send_message(WMSG_STATUS, &m);
 }

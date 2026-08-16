@@ -91,6 +91,10 @@ class MainActivity : AppCompatActivity() {
                     "Already exempt", Toast.LENGTH_SHORT).show()
             }
         })
+        col.addView(Button(this).apply {
+            text = "Allow alarm over the lock screen"
+            setOnClickListener { openAlarmDisplaySettings() }
+        })
 
         header("Diagnostics")
         @Suppress("UseSwitchCompatOrMaterialCode")
@@ -201,6 +205,39 @@ class MainActivity : AppCompatActivity() {
                     if (s.activeEscalations > 0)
                         " · ${s.activeEscalations} ACTIVE ESCALATION(S)" else ""
             }
+        }
+    }
+
+    /**
+     * The screen-takeover alarm needs OEM blessings that no runtime dialog
+     * can request. On Xiaomi (MIUI/HyperOS) the gate is "Show on lock
+     * screen" + "Display pop-up windows while running in the background"
+     * inside the app's Other-permissions page; the MIUI permission editor
+     * intent lands there directly. Fallbacks: the stock full-screen-intent
+     * page (Android 14+), then plain app details.
+     */
+    private fun openAlarmDisplaySettings() {
+        Toast.makeText(this,
+            "Enable 'Show on lock screen' and 'Display pop-up windows " +
+            "while running in the background'", Toast.LENGTH_LONG).show()
+        val attempts = mutableListOf(
+            Intent("miui.intent.action.APP_PERM_EDITOR").apply {
+                setClassName("com.miui.securitycenter",
+                    "com.miui.permcenter.permissions.PermissionsEditorActivity")
+                putExtra("extra_pkgname", packageName)
+            })
+        if (Build.VERSION.SDK_INT >= 34) {
+            attempts += Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                Uri.parse("package:$packageName"))
+        }
+        attempts += Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:$packageName"))
+        for (intent in attempts) {
+            try {
+                startActivity(intent)
+                CmLog.i("MainActivity", "alarm-display settings via ${intent.action}")
+                return
+            } catch (_: Exception) { /* next fallback */ }
         }
     }
 

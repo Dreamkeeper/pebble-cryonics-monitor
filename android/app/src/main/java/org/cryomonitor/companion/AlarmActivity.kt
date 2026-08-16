@@ -6,8 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -16,18 +14,15 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import kotlin.concurrent.thread
 
 /**
- * Full-screen alarm over the lock screen: siren for bystanders, big CANCEL,
- * one-tap dial of the local emergency number for the wearer.
+ * Full-screen alarm over the lock screen: big CANCEL, one-tap dial of the
+ * local emergency number for the wearer. The bystander siren is owned by
+ * MonitorService (it must sound even if this screen never launches).
  * Pre-alarm (watch countdown running) and full alarm differ only in wording;
  * cancelling either sends USER_OK to the watch and retracts escalation.
  */
 class AlarmActivity : AppCompatActivity() {
-
-    private var tone: ToneGenerator? = null
-    @Volatile private var sirenOn = false
 
     private val cancelledReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) = finish() // watch cancelled
@@ -87,23 +82,9 @@ class AlarmActivity : AppCompatActivity() {
             registerReceiver(cancelledReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         else @Suppress("UnspecifiedRegisterReceiverFlag")
             registerReceiver(cancelledReceiver, filter)
-
-        if (!preAlarm) startSiren()
-    }
-
-    private fun startSiren() {
-        sirenOn = true
-        tone = ToneGenerator(AudioManager.STREAM_ALARM, ToneGenerator.MAX_VOLUME)
-        thread {
-            while (sirenOn) {
-                tone?.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 800)
-                Thread.sleep(1000)
-            }
-        }
     }
 
     private fun onCancelPressed() {
-        stopSiren()
         // Post-event cause picker (Pixel "Share what happened" pattern) —
         // the cause feeds the learning layer via the retraction message.
         val causes = arrayOf("Loose strap", "Slept on my arm", "Took the watch off",
@@ -123,15 +104,7 @@ class AlarmActivity : AppCompatActivity() {
         finish()
     }
 
-    private fun stopSiren() {
-        sirenOn = false
-        tone?.stopTone()
-        tone?.release()
-        tone = null
-    }
-
     override fun onDestroy() {
-        stopSiren()
         runCatching { unregisterReceiver(cancelledReceiver) }
         super.onDestroy()
     }

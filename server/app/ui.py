@@ -205,12 +205,35 @@ def _render_wearer(request: Request, op: ops.Operator, wid: str,
         "contacts": db.list_contacts(wid), "tiers": db.list_tiers(wid),
         "degraded": wearer_degraded(wid), "events": events,
         "enroll_code": enroll_code, "notice": notice,
+        "refresh_s": UI_REFRESH_S,
         "contact_error": contact_error}, status_code=status_code)
 
 
 @router.get("/wearers/{wid}", response_class=HTMLResponse)
 def wearer_page(request: Request, wid: str):
     return _render_wearer(request, ops.require_operator(request), wid)
+
+
+@router.get("/fragments/wearer/{wid}", response_class=HTMLResponse)
+def wearer_fragment(request: Request, wid: str):
+    """Live status + active escalations, polled by the wearer page so an
+    incoming ACK/resolve appears without a manual reload (E2E T5)."""
+    op = ops.require_operator(request)
+    rt = _rt()
+    w = db.get_wearer(wid)
+    if not w:
+        raise HTTPException(404, "unknown wearer")
+    _score, states = wearer_states(w)
+    m = rt.get_monitor(wid)
+    trail = db.heartbeat_trail(wid)
+    active = [{"id": eid, "kind": e.kind.value, "detector": e.detector,
+               "any_ack": e.any_ack, "started": _fmt(e.started_t)}
+              for eid, (ewid, e) in rt.escalations.items()
+              if ewid == wid and not e.resolved]
+    return templates.TemplateResponse(request, "_wearer_live.html", {
+        "op": op, "states": states, "last_hb": _fmt(m.last_heartbeat_t),
+        "battery": trail[-1]["battery"] if trail else None,
+        "trail": trail, "active": active})
 
 
 # ---- escalation actions (responder + admin) ----

@@ -3,9 +3,12 @@ package org.cryomonitor.companion
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
@@ -36,6 +39,9 @@ class MonitorService : Service(), PebbleTransport.Listener {
     @Volatile private var serverReachable = true
     @Volatile private var activeEscalationId: String? = null
     @Volatile private var degradedNotified = false
+    @Volatile private var suspendedUntilT = 0L
+    @Volatile private var sirenOn = false
+    private var tone: ToneGenerator? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -102,23 +108,38 @@ class MonitorService : Service(), PebbleTransport.Listener {
             Protocol.PMSG_PRE_ALARM -> {
                 val det = detectorName(data)
                 CmLog.i(TAG, "PRE-ALARM from watch: $det")
-                AlarmActivity.launch(this, det, preAlarm = true)
+                showAlarmUi(det, preAlarm = true)
             }
             Protocol.PMSG_ALARM -> {
                 val det = detectorName(data)
                 CmLog.i(TAG, "ALARM from watch: $det")
-                AlarmActivity.launch(this, det, preAlarm = false)
+                startSiren()
+                showAlarmUi(det, preAlarm = false)
                 scope.launch { escalate(det) }
             }
             Protocol.PMSG_CANCEL -> {
                 CmLog.i(TAG, "watch cancelled alert (reason=" +
                     "${data[PebbleTransport.KEY_CANCEL_REASON]})")
+                clearAlarmUi()
                 sendBroadcast(Intent(ACTION_ALERT_CANCELLED).setPackage(packageName))
                 scope.launch { retract("cancelled_on_watch") }
             }
             Protocol.PMSG_SUSPENDED -> {
-                CmLog.i(TAG, "suspension state change from watch")
+                // SECONDS carries the suspension duration; 0 = ended
+                // (expired or auto-resumed). Wall-clock deadline self-clears
+                // even if the end message is lost.
+                val secs = (data[PebbleTransport.KEY_SECONDS] as? Int) ?: 0
+                suspendedUntilT = if (secs > 0)
+                    System.currentTimeMillis() + secs * 1000L else 0L
+                CmLog.i(TAG, "suspension from watch: " +
+                    if (secs > 0) "for ${secs}s" else "ended")
                 updateNotification()
+            }
+            Protocol.PMSG_NOTWORN -> {
+                CmLog.w(TAG, "watch reports not worn")
+                notifyFault("Watch appears OFF-WRIST (no pulse, no motion) " +
+                    "without a suspension — monitoring is blind. Re-wear the " +
+                    "watch or suspend monitoring. Contacts are NOT alerted.")
             }
         }
     }
@@ -151,9 +172,74 @@ class MonitorService : Service(), PebbleTransport.Listener {
 
     private fun retract(reason: String) {
         CmLog.i(TAG, "retract: $reason (esc=$activeEscalationId)")
+        clearAlarmUi()
         activeEscalationId?.let { server.resolve(it, "false_alarm") }
         activeEscalationId = null
         escalator.cancel(reason)
+    }
+
+    // ---- alarm surface (T2 fix) ----
+    //
+    // startActivity() from a background service is silently discarded on
+    // Android 10+ (background-activity-launch restriction) — the reason the
+    // full-screen alarm never appeared during E2E T2 while Telegram and the
+    // dashboard fired fine. The reliable path is a full-screen-intent
+    // notification: the system itself launches AlarmActivity when the screen
+    // is off/locked, and shows an urgent heads-up otherwise. The siren is
+    // service-owned so a bystander hears it even if no UI ever launches.
+
+    private fun showAlarmUi(detector: String, preAlarm: Boolean) {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel(
+            CHANNEL_ALARM, "Alarms", NotificationManager.IMPORTANCE_HIGH))
+        if (Build.VERSION.SDK_INT >= 34 && !nm.canUseFullScreenIntent()) {
+            CmLog.w(TAG, "full-screen intents NOT permitted — alarm shows " +
+                "as heads-up only (Settings > Apps > Special access)")
+        }
+        val pi = PendingIntent.getActivity(this, 0,
+            Intent(this, AlarmActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra("detector", detector)
+                .putExtra("preAlarm", preAlarm),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        nm.notify(NOTIF_ALARM_ID, Notification.Builder(this, CHANNEL_ALARM)
+            .setContentTitle(if (preAlarm) "PRE-ALARM: $detector"
+                             else "ALARM: $detector — contacts being alerted")
+            .setContentText("Tap to open. Cancel there if you are OK.")
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setCategory(Notification.CATEGORY_ALARM)
+            .setFullScreenIntent(pi, true)
+            .setOngoing(true)
+            .build())
+        // Direct launch still works whenever we do hold launch privilege
+        // (app visible or recently visible); harmless no-op otherwise.
+        AlarmActivity.launch(this, detector, preAlarm)
+    }
+
+    private fun clearAlarmUi() {
+        stopSiren()
+        getSystemService(NotificationManager::class.java).cancel(NOTIF_ALARM_ID)
+    }
+
+    private fun startSiren() {
+        if (sirenOn) return
+        sirenOn = true
+        tone = ToneGenerator(AudioManager.STREAM_ALARM, ToneGenerator.MAX_VOLUME)
+        scope.launch {
+            while (sirenOn) {
+                runCatching {
+                    tone?.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 800)
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    private fun stopSiren() {
+        sirenOn = false
+        tone?.stopTone()
+        tone?.release()
+        tone = null
     }
 
     // ---- loops ----
@@ -312,10 +398,13 @@ class MonitorService : Service(), PebbleTransport.Listener {
             serverReachable -> "server ✓"
             else -> "SERVER: ${server.lastResult}"
         }
-        return "$link$wb$sync · $srv"
+        val suspLeft = suspendedUntilT - System.currentTimeMillis()
+        val susp = if (suspLeft > 0) "SUSPENDED ${(suspLeft / 60000) + 1}m · " else ""
+        return "$susp$link$wb$sync · $srv"
     }
 
     override fun onDestroy() {
+        stopSiren()
         watchLink.stop()
         scope.cancel()
         super.onDestroy()
@@ -327,8 +416,10 @@ class MonitorService : Service(), PebbleTransport.Listener {
         private const val TAG = "MonitorService"
         const val CHANNEL_ID = "monitor"
         const val CHANNEL_FAULT = "faults"
+        const val CHANNEL_ALARM = "alarms"
         const val NOTIF_ID = 1
         const val NOTIF_FAULT_ID = 2
+        const val NOTIF_ALARM_ID = 3
         const val ACTION_USER_CANCEL = "org.cryomonitor.USER_CANCEL"
         const val ACTION_TEST_ALARM = "org.cryomonitor.TEST_ALARM"
         const val ACTION_ALERT_CANCELLED = "org.cryomonitor.ALERT_CANCELLED"

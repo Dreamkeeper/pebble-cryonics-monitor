@@ -25,6 +25,11 @@ static TextLayer *s_status_layer;
 static TextLayer *s_detail_layer;
 static char s_status_buf[48];
 static char s_detail_buf[64];
+/* A not-worn nag owns the screen until the wearer reacts: the stale-launch
+ * guard and the periodic status poll must not wipe or dismiss it. */
+static bool s_nag_hold;
+
+static const char *HINTS_TEXT = "SELECT check-in\nUP suspend  DOWN hold SOS";
 
 static Window *s_alert_window;
 static TextLayer *s_alert_title;
@@ -235,15 +240,28 @@ static void handle_action(const cm_action *a) {
       show_alert(a);
       break;
     case CM_ACT_NOTWORN_NAG:
-      vibes_double_pulse(); /* TODO dedicated nag UI + phone forward */
+      s_nag_hold = true;
+      vibes_double_pulse();
+      text_layer_set_text(s_status_layer, "Not worn?");
+      text_layer_set_text(s_detail_layer, "Re-wear the watch,\nor UP to suspend");
+      send_to_phone(PMSG_NOTWORN, a);
       break;
     case CM_ACT_CHECKIN_REMINDER:
       vibes_short_pulse();  /* TODO show "check-in due in N min" */
       break;
+    case CM_ACT_SUSPEND_STARTED:
+      snprintf(s_status_buf, sizeof(s_status_buf), "Suspended %u min",
+               (unsigned)(a->seconds / 60u));
+      text_layer_set_text(s_status_layer, s_status_buf);
+      send_to_phone(PMSG_SUSPENDED, a); /* SECONDS = duration */
+      break;
     case CM_ACT_SUSPEND_EXPIRED:
     case CM_ACT_AUTO_RESUMED:
-      vibes_short_pulse();
-      send_to_phone(PMSG_SUSPENDED, a);
+      vibes_double_pulse();
+      s_nag_hold = false;
+      text_layer_set_text(s_status_layer, "Monitoring");
+      text_layer_set_text(s_detail_layer, HINTS_TEXT);
+      send_to_phone(PMSG_SUSPENDED, a); /* SECONDS = 0 -> ended */
       break;
     default: break;
   }
@@ -268,14 +286,30 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
     persist_delete(PK_PENDING_ACTION); /* we got it live */
     handle_action(&a);
   } else if (type == WMSG_STATUS) {
-    snprintf(s_detail_buf, sizeof(s_detail_buf), "stage %u  susp %u min%s",
-             (unsigned)m->data0, (unsigned)m->data2, s_debug ? "  DBG" : "");
-    text_layer_set_text(s_detail_layer, s_detail_buf);
+    if (s_debug) {
+      snprintf(s_detail_buf, sizeof(s_detail_buf), "stage %u  susp %u min  DBG",
+               (unsigned)m->data0, (unsigned)m->data2);
+      text_layer_set_text(s_detail_layer, s_detail_buf);
+    }
+    /* Keep the big status line truthful: the worker owns the state, the
+     * app just displays it (a stale "Suspended 30 min" after auto-resume
+     * was exactly the failure mode this prevents). */
+    if (!s_nag_hold) {
+      if (m->data2 > 0) {
+        snprintf(s_status_buf, sizeof(s_status_buf), "Suspended %u min",
+                 (unsigned)m->data2);
+        text_layer_set_text(s_status_layer, s_status_buf);
+      } else if (m->data0 == (uint16_t)CM_STAGE_NONE) {
+        text_layer_set_text(s_status_layer, "Monitoring");
+      }
+    }
     /* Stale-launch guard: the worker launched us for an alert that has
      * since ended (e.g. motion cancelled it during the launch gap). A
      * bare "Monitoring" screen the wearer never asked for must not sit
-     * on top of their watchface — hand the screen back. */
-    if (s_launched_by_worker && m->data0 == (uint16_t)CM_STAGE_NONE) {
+     * on top of their watchface — hand the screen back. A nag launch is
+     * NOT stale: it deliberately has no ladder stage. */
+    if (s_launched_by_worker && !s_nag_hold &&
+        m->data0 == (uint16_t)CM_STAGE_NONE && m->data2 == 0) {
       DLOG("stale worker launch: no active stage, returning to watchface");
       vibes_cancel();
       if (s_alert_window) window_stack_remove(s_alert_window, true);
@@ -287,8 +321,11 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
 /* ---------- suspension menu ---------- */
 
 static void suspend_minutes(uint16_t minutes) {
+  s_nag_hold = false;
+  text_layer_set_text(s_detail_layer, HINTS_TEXT);
   AppWorkerMessage m = {.data0 = minutes, .data1 = 1 /* auto-resume default on */};
   app_worker_send_message(WMSG_SUSPEND, &m);
+  /* label confirmed by the worker's SUSPEND_STARTED action + status polls */
   snprintf(s_status_buf, sizeof(s_status_buf), "Suspended %u min", minutes);
   text_layer_set_text(s_status_layer, s_status_buf);
 }
@@ -303,6 +340,8 @@ static void up_click(ClickRecognizerRef ref, void *ctx) {
 }
 
 static void select_click(ClickRecognizerRef ref, void *ctx) {
+  s_nag_hold = false;
+  text_layer_set_text(s_detail_layer, HINTS_TEXT);
   AppWorkerMessage m = {0};
   app_worker_send_message(WMSG_USER_OK, &m); /* manual check-in / resume */
   text_layer_set_text(s_status_layer, "Checked in");
@@ -351,7 +390,7 @@ static void main_window_load(Window *w) {
   text_layer_set_text_alignment(s_detail_layer, GTextAlignmentCenter);
   text_layer_set_background_color(s_detail_layer, GColorClear);
   text_layer_set_text_color(s_detail_layer, fg);
-  text_layer_set_text(s_detail_layer, "SELECT check-in\nUP suspend  DOWN hold SOS");
+  text_layer_set_text(s_detail_layer, HINTS_TEXT);
   layer_add_child(root, text_layer_get_layer(s_detail_layer));
 }
 
@@ -366,6 +405,12 @@ static void main_window_unload(Window *w) {
  * BT connection events — documented v0.1 limitation.) */
 static void app_tick(struct tm *tick_time, TimeUnits changed) {
   static uint16_t s_hb_seq = 0;
+  /* Poll worker state so the status line stays truthful (suspension
+   * countdown, auto-resume, ladder stage) — cheap worker IPC, no radio. */
+  if (tick_time->tm_sec % 5 == 0) {
+    AppWorkerMessage m = {0};
+    app_worker_send_message(WMSG_STATUS_REQ, &m);
+  }
   if (tick_time->tm_sec == 0) { /* once a minute */
     DictionaryIterator *out;
     if (app_message_outbox_begin(&out) == APP_MSG_OK) {

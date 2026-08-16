@@ -116,6 +116,13 @@ static void drain_actions(void) {
         notify_app(&a, true);
         break;
 
+      /* The watch looks off-wrist: nobody is watching the watchface, so
+       * taking the screen for the nag is the point — otherwise the nag
+       * is invisible in worker mode (the worker cannot vibrate). */
+      case CM_ACT_NOTWORN_NAG:
+        notify_app(&a, true);
+        break;
+
       /* Informational: never hijack the watchface for these. A
        * cancellation also invalidates any parked launch action — the
        * racing app launch must find nothing rather than a stale alert. */
@@ -123,9 +130,15 @@ static void drain_actions(void) {
         persist_delete(PK_PENDING_ACTION);
         notify_app(&a, false);
         break;
-      case CM_ACT_NOTWORN_NAG:
+      case CM_ACT_SUSPEND_STARTED:
+        notify_app(&a, false);
+        break;
+      /* Resume clears the persisted suspension — without this a worker
+       * restart would silently re-suspend until the original expiry. */
       case CM_ACT_SUSPEND_EXPIRED:
       case CM_ACT_AUTO_RESUMED:
+        persist_delete(PK_SUSPEND_UNTIL);
+        persist_delete(PK_SUSPEND_AUTORESUME);
         notify_app(&a, false);
         break;
       default: break;
@@ -208,7 +221,11 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
       persist_write_int(PK_SUSPEND_UNTIL, (int)(time(NULL) + m->data0 * 60));
       persist_write_int(PK_SUSPEND_AUTORESUME, m->data1);
       break;
-    case WMSG_RESUME: cm_resume(&s_core, now_ms()); break;
+    case WMSG_RESUME:
+      cm_resume(&s_core, now_ms());
+      persist_delete(PK_SUSPEND_UNTIL);
+      persist_delete(PK_SUSPEND_AUTORESUME);
+      break;
     case WMSG_SOS: cm_manual_sos(&s_core, now_ms()); break;
     case WMSG_STATUS_REQ: push_status_to_app(); break;
     case WMSG_SET_DEBUG:

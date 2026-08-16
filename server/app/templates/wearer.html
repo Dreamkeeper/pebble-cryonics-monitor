@@ -4,39 +4,14 @@
   {% if not wearer.enabled %}<span class="state st-disabled">disabled</span>{% endif %}
 </h2>
 
-<div class="card">
-  {% for s in states %}<span class="state st-{{ s.css }}">{{ s.label }}</span> {% endfor %}
-  <p class="muted">Last heartbeat: {{ last_hb }} · phone battery:
-     {{ battery if battery is not none else "—" }}%</p>
-  <p>Battery trail (48 h):
-    {% for p in trail %}<span class="bar" title="{{ p.battery }}%"
-      style="height: {{ (p.battery or 0) // 4 + 2 }}px"></span>{% endfor %}
-  </p>
+{# Live section polls like the fleet page, but pauses while the operator is
+   mid-interaction (typing a resolve reason / picking an option) so the swap
+   never eats their input. #}
+<div hx-get="/ui/fragments/wearer/{{ wearer.id }}"
+     hx-trigger="every {{ refresh_s }}s [!document.activeElement || !document.activeElement.closest('#live')]"
+     hx-swap="innerHTML" id="live">
+  {% include "_wearer_live.html" %}
 </div>
-
-<h3>Active escalations</h3>
-{% if not active %}<p class="muted">None.</p>{% endif %}
-{% for e in active %}
-<div class="card">
-  <b>{{ e.id }}</b> — {{ e.kind }} / {{ e.detector }}
-  {% if e.any_ack %}<span class="state st-ok">acknowledged</span>
-  {% else %}<span class="state st-alarm">UNACKNOWLEDGED</span>{% endif %}
-  <p class="muted">started {{ e.started }}</p>
-  <form class="inline" method="post" action="/ui/escalations/{{ e.id }}/ack">
-    <input type="hidden" name="csrf" value="{{ op.csrf }}">
-    <button>Acknowledge</button>
-  </form>
-  <form class="inline" method="post" action="/ui/escalations/{{ e.id }}/resolve">
-    <input type="hidden" name="csrf" value="{{ op.csrf }}">
-    <select name="resolution">
-      <option value="handled">handled</option>
-      <option value="false_alarm">false alarm</option>
-    </select>
-    <input name="reason" placeholder="what happened (required)" required>
-    <button>Resolve</button>
-  </form>
-</div>
-{% endfor %}
 
 <h3>Contacts & tiers</h3>
 {% if degraded %}<p class="danger">DEGRADED — alarms for this wearer reach

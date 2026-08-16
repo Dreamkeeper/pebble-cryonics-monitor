@@ -139,6 +139,26 @@ def test_fleet_sorts_worst_first(appenv_ui):
     assert "ESCALATING" in page.text
 
 
+def test_wearer_live_fragment_tracks_ack_without_reload(appenv_ui):
+    csrf = ui_login(appenv_ui.client)
+    appenv_ui.client.post("/api/v1/alarm", json={"detector": "impact"},
+                          headers=wearer_headers())
+    frag = appenv_ui.client.get("/ui/fragments/wearer/default")
+    assert frag.status_code == 200
+    assert "UNACKNOWLEDGED" in frag.text
+    esc_id = frag.text.split("<b>")[1].split("</b>")[0]
+    r = appenv_ui.client.post(f"/ui/escalations/{esc_id}/ack",
+                              data={"csrf": csrf}, follow_redirects=False)
+    assert r.status_code == 303
+    frag = appenv_ui.client.get("/ui/fragments/wearer/default")
+    assert "UNACKNOWLEDGED" not in frag.text and "acknowledged" in frag.text
+    # the fragment is behind the operator session like every other page
+    from fastapi.testclient import TestClient
+    anon = TestClient(appenv_ui.client.app)
+    assert anon.get("/ui/fragments/wearer/default",
+                    follow_redirects=False).status_code in (303, 401)
+
+
 # ---- escalation actions ----
 
 def test_operator_ack_gates_promotion_and_is_audited(appenv_ui):

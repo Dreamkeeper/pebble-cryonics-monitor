@@ -38,7 +38,8 @@ enum {
   PMSG_CONFIG = 6,        /* phone->watch: cm_config blob push */
   PMSG_CONFIG_ACK = 7,    /* watch->phone */
   PMSG_USER_OK_REMOTE = 8,/* phone->watch: user cancelled on the phone */
-  PMSG_SET_DEBUG = 9      /* phone->watch: SECONDS key carries 0/1 */
+  PMSG_SET_DEBUG = 9,     /* phone->watch: SECONDS key carries 0/1 */
+  PMSG_NOTWORN = 10       /* watch->phone: off-wrist nag (wearer-only, never contacts) */
 };
 
 /* Heartbeat cadence (watch -> phone) while connected. */

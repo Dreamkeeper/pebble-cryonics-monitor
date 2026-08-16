@@ -29,7 +29,7 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Build both flavors; sideload on the Xiaomi 17 Ultra; enroll
+- [x] 4.1 Build both flavors; sideload on the Xiaomi 17 Ultra; enroll
       against the NAS with a real code; edit real contacts; run fire
       drill and confirm ACK round-trip
 - [x] 4.2 Server suite + detector suite unchanged-green per project
@@ -37,4 +37,4 @@
       touched, `pebble clean && pebble build`)
 - [x] 4.3 Update README/deploy docs: enrollment is the primary
       onboarding; curl examples marked operator-only
-- [ ] 4.4 Sync delta spec into `openspec/specs/` and archive the change
+- [x] 4.4 Sync delta spec into `openspec/specs/` and archive the change

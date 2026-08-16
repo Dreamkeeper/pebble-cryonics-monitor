@@ -129,9 +129,18 @@ pushes the toggle to the watch, whose debug output is readable with
 
 ## Multi-wearer administration (server v0.2+)
 
-The server hosts multiple wearers (family / response group). Until the
-web dashboard lands, administration is curl against the API using
-`CM_ADMIN_TOKEN` from `.env`:
+The server hosts multiple wearers (family / response group).
+
+**Wearer onboarding is app-first**: an operator issues an enrollment
+code (below), the wearer taps "Enroll with a code" in the Android app,
+and manages contacts, tiers, and self-notification from the app's
+"Contacts & safety net" screen. The curl examples below are
+**operator-only** (wearer creation, code issuance) or a fallback until
+the web dashboard lands — day-to-day contact upkeep should happen in
+the app, not over SSH. Contacts discover their Telegram chat id by
+messaging the deployment's bot, which replies with it.
+
+Operator administration with `CM_ADMIN_TOKEN` from `.env`:
 
 ```bash
 BASE=https://cm.example.com

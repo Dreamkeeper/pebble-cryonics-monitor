@@ -13,8 +13,8 @@ android {
         applicationId = "org.cryomonitor.companion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.2.4"
+        versionCode = 7
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -35,6 +35,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testOptions {
+        // android.util.Log no-ops in JVM tests; real org.json comes from
+        // the explicit test dependency below.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 kotlin {
@@ -52,4 +58,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.json:json:20240303")
 }

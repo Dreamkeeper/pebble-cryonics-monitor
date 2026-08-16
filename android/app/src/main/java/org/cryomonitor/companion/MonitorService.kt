@@ -35,6 +35,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     @Volatile private var faultNotified = false
     @Volatile private var serverReachable = true
     @Volatile private var activeEscalationId: String? = null
+    @Volatile private var degradedNotified = false
 
     override fun onCreate() {
         super.onCreate()
@@ -184,9 +185,12 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
                 val age = if (lastWatchDataT == 0L) null
                           else ((System.currentTimeMillis() - lastWatchDataT) / 1000).toInt()
-                val ok = server.heartbeat(pct, watchBattery, age,
-                                          lowBatteryWarning = pct in 1..15)
-                CmLog.d(TAG, "server heartbeat ok=$ok phoneBatt=$pct watchAge=$age")
+                val ack = server.heartbeat(pct, watchBattery, age,
+                                           lowBatteryWarning = pct in 1..15)
+                val ok = ack != null
+                CmLog.d(TAG, "server heartbeat ok=$ok phoneBatt=$pct watchAge=$age " +
+                    "degraded=${ack?.degraded}")
+                if (ack != null) onDegradedState(ack.degraded)
                 if (!ok && serverReachable) {
                     serverReachable = false
                     CmLog.w(TAG, "server unreachable")
@@ -216,10 +220,12 @@ class MonitorService : Service(), PebbleTransport.Listener {
             ACTION_HEARTBEAT_NOW -> scope.launch {
                 val bm = getSystemService(BatteryManager::class.java)
                 val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                val ok = server.configured &&
-                    server.heartbeat(pct, watchBattery, null, lowBatteryWarning = false)
-                serverReachable = ok
-                CmLog.i(TAG, "manual heartbeat: ${if (ok) "OK" else "FAILED"} " +
+                val ack = if (server.configured)
+                    server.heartbeat(pct, watchBattery, null,
+                                     lowBatteryWarning = false) else null
+                serverReachable = ack != null
+                if (ack != null) onDegradedState(ack.degraded)
+                CmLog.i(TAG, "manual heartbeat: ${if (ack != null) "OK" else "FAILED"} " +
                     "(url=${settings.serverUrl.ifEmpty { "unset" }}, " +
                     "result=${server.lastResult})")
                 updateNotification()
@@ -235,6 +241,19 @@ class MonitorService : Service(), PebbleTransport.Listener {
             }
         }
         return START_STICKY
+    }
+
+    /** DEGRADED = alarms would reach nobody. That is a fault, treated like
+     *  one: FAULT-channel notification on the transition into degraded. */
+    private fun onDegradedState(degraded: Boolean) {
+        if (degraded && !degradedNotified) {
+            degradedNotified = true
+            notifyFault("No emergency contacts configured — alarms currently " +
+                "reach NOBODY except this phone. Open Contacts & safety net.")
+        } else if (!degraded && degradedNotified) {
+            degradedNotified = false
+            CmLog.i(TAG, "degraded cleared: deliverable contacts exist")
+        }
     }
 
     // ---- notifications ----

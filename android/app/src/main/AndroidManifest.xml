@@ -54,6 +54,14 @@
             android:name=".LogActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".EnrollActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ContactsActivity"
+            android:exported="false" />
+
         <!-- PebbleKit2: the Core app binds this when our watchapp opens -->
         <service
             android:name=".PebbleKit2ListenerService"

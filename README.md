@@ -23,7 +23,7 @@ never auto-dials them.
 | Directory | What it is |
 |---|---|
 | [`watchapp/`](watchapp/) | Pebble app (C, SDK 4.x): background-worker or persistent-foreground monitoring, on-watch alert ladder, suspension menu. Targets `emery`, `diorite`, `flint`, `gabbro`. |
-| [`android/`](android/) | Android companion (Kotlin): foreground service, watch watchdog, full-screen alarm with cancel window, phone-direct SMS/call/Telegram fallback escalation, server link. |
+| [`android/`](android/) | Android companion (Kotlin): foreground service, watch watchdog, full-screen alarm with cancel window, phone-direct SMS/call/Telegram fallback escalation, server link, enrollment-by-code onboarding, contact/tier/self-notify management. |
 | [`server/`](server/) | Self-hosted backend (Python/FastAPI, Docker): phone dead-man monitoring, tiered escalation with delivery ACK + retry via Telegram/email/ntfy, web dashboard, learning-mode pattern miner. |
 | [`docs/`](docs/) | Product plan, threshold rationale, M0 feasibility-spike checklist. |
 | [`openspec/`](openspec/) | Living specs ([OpenSpec](https://github.com/Fission-AI/openspec)): detector ladder, watch↔phone protocol, escalation/dead-man, suspension. Changes flow through `/opsx:propose` → `/opsx:apply` → `/opsx:archive`. |

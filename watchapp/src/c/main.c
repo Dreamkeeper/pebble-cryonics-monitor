@@ -20,6 +20,7 @@ static bool s_launched_by_worker;
   } while (0)
 
 static Window *s_main_window;
+static StatusBarLayer *s_status_bar;  /* guideline: long-running apps show time */
 static TextLayer *s_status_layer;
 static TextLayer *s_detail_layer;
 static char s_status_buf[48];
@@ -27,8 +28,9 @@ static char s_detail_buf[64];
 
 static Window *s_alert_window;
 static TextLayer *s_alert_title;
+static TextLayer *s_alert_count;   /* dominant countdown numerals */
 static TextLayer *s_alert_body;
-static char s_alert_body_buf[64];
+static char s_alert_count_buf[8];
 static AppTimer *s_alert_timer;
 static cm_action s_alert_action;
 static uint16_t s_alert_seconds_left;
@@ -114,16 +116,38 @@ static void alert_tick(void *data) {
   if (!s_alert_window) return;
 
   if (s_alert_seconds_left > 0) s_alert_seconds_left--;
-  snprintf(s_alert_body_buf, sizeof(s_alert_body_buf),
-           s_alert_action.type == CM_ACT_COUNTDOWN_START
-               ? "Alarming in %u s\nPress SELECT if OK"
-               : "Are you OK?\nPress SELECT (%u s)",
+  snprintf(s_alert_count_buf, sizeof(s_alert_count_buf), "%u",
            (unsigned)s_alert_seconds_left);
-  text_layer_set_text(s_alert_body, s_alert_body_buf);
+  text_layer_set_text(s_alert_count, s_alert_count_buf);
+  text_layer_set_text(s_alert_body,
+                      s_alert_action.type == CM_ACT_COUNTDOWN_START
+                          ? "SELECT if you are OK"
+                          : "Are you OK? Press SELECT");
 
   /* escalate vibration every few seconds; the core decides stage changes */
   if (s_alert_seconds_left % 5 == 0) alert_vibe();
   s_alert_timer = app_timer_register(1000, alert_tick, NULL);
+}
+
+/* Semantic color (guideline: red only for genuine error/alarm states):
+ * amber while asking, red once the countdown to alarm is running. */
+static void alert_apply_style(void) {
+  bool critical = s_alert_action.type == CM_ACT_COUNTDOWN_START ||
+                  s_alert_action.type == CM_ACT_ALARM;
+#if defined(PBL_COLOR)
+  GColor bg = critical ? GColorRed : GColorChromeYellow;
+  GColor fg = critical ? GColorWhite : GColorBlack;
+#else
+  (void)critical;  /* monochrome: hierarchy carries the urgency instead */
+  GColor bg = GColorWhite;
+  GColor fg = GColorBlack;
+#endif
+  window_set_background_color(s_alert_window, bg);
+  TextLayer *layers[] = {s_alert_title, s_alert_count, s_alert_body};
+  for (unsigned i = 0; i < ARRAY_LENGTH(layers); i++) {
+    text_layer_set_background_color(layers[i], GColorClear);
+    text_layer_set_text_color(layers[i], fg);
+  }
 }
 
 static void alert_select(ClickRecognizerRef ref, void *ctx) {
@@ -142,17 +166,26 @@ static void alert_click_config(void *ctx) {
 static void alert_window_load(Window *w) {
   Layer *root = window_get_root_layer(w);
   GRect b = layer_get_bounds(root);
-  s_alert_title = text_layer_create(GRect(0, 20, b.size.w, 40));
-  text_layer_set_font(s_alert_title, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  /* guideline hierarchy: 28pt title, dominant numeric countdown, 18pt hint */
+  s_alert_title = text_layer_create(GRect(0, 4, b.size.w, 62));
+  text_layer_set_font(s_alert_title,
+                      fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   text_layer_set_text_alignment(s_alert_title, GTextAlignmentCenter);
   text_layer_set_text(s_alert_title, detector_name(s_alert_action.detector));
   layer_add_child(root, text_layer_get_layer(s_alert_title));
 
-  s_alert_body = text_layer_create(GRect(0, 70, b.size.w, 80));
+  s_alert_count = text_layer_create(GRect(0, b.size.h / 2 - 24, b.size.w, 52));
+  text_layer_set_font(s_alert_count,
+                      fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS));
+  text_layer_set_text_alignment(s_alert_count, GTextAlignmentCenter);
+  layer_add_child(root, text_layer_get_layer(s_alert_count));
+
+  s_alert_body = text_layer_create(GRect(0, b.size.h - 46, b.size.w, 42));
   text_layer_set_font(s_alert_body, fonts_get_system_font(FONT_KEY_GOTHIC_18));
   text_layer_set_text_alignment(s_alert_body, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_alert_body));
 
+  alert_apply_style();
   s_alert_seconds_left = s_alert_action.seconds;
   alert_vibe();
   alert_tick(NULL);
@@ -161,6 +194,7 @@ static void alert_window_load(Window *w) {
 static void alert_window_unload(Window *w) {
   if (s_alert_timer) { app_timer_cancel(s_alert_timer); s_alert_timer = NULL; }
   text_layer_destroy(s_alert_title);
+  text_layer_destroy(s_alert_count);
   text_layer_destroy(s_alert_body);
   window_destroy(s_alert_window);
   s_alert_window = NULL;
@@ -187,6 +221,7 @@ static void show_alert(const cm_action *a) {
   } else {
     s_alert_seconds_left = a->seconds;
     text_layer_set_text(s_alert_title, detector_name(a->detector));
+    alert_apply_style();  /* stage may have escalated: amber -> red */
   }
 }
 
@@ -290,20 +325,38 @@ static void main_window_load(Window *w) {
   Layer *root = window_get_root_layer(w);
   GRect b = layer_get_bounds(root);
 
-  s_status_layer = text_layer_create(GRect(0, 30, b.size.w, 60));
-  text_layer_set_font(s_status_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  /* guideline: long-running apps keep the time visible */
+  s_status_bar = status_bar_layer_create();
+  status_bar_layer_set_colors(s_status_bar,
+      PBL_IF_COLOR_ELSE(GColorDarkGreen, GColorWhite),
+      PBL_IF_COLOR_ELSE(GColorWhite, GColorBlack));
+  layer_add_child(root, status_bar_layer_get_layer(s_status_bar));
+
+  window_set_background_color(w,
+      PBL_IF_COLOR_ELSE(GColorDarkGreen, GColorWhite));
+  GColor fg = PBL_IF_COLOR_ELSE(GColorWhite, GColorBlack);
+
+  s_status_layer = text_layer_create(
+      GRect(0, STATUS_BAR_LAYER_HEIGHT + 14, b.size.w, 64));
+  text_layer_set_font(s_status_layer,
+                      fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   text_layer_set_text_alignment(s_status_layer, GTextAlignmentCenter);
+  text_layer_set_background_color(s_status_layer, GColorClear);
+  text_layer_set_text_color(s_status_layer, fg);
   text_layer_set_text(s_status_layer, "Monitoring");
   layer_add_child(root, text_layer_get_layer(s_status_layer));
 
-  s_detail_layer = text_layer_create(GRect(0, 95, b.size.w, 60));
+  s_detail_layer = text_layer_create(GRect(0, b.size.h - 62, b.size.w, 58));
   text_layer_set_font(s_detail_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
   text_layer_set_text_alignment(s_detail_layer, GTextAlignmentCenter);
+  text_layer_set_background_color(s_detail_layer, GColorClear);
+  text_layer_set_text_color(s_detail_layer, fg);
   text_layer_set_text(s_detail_layer, "SELECT check-in\nUP suspend  DOWN hold SOS");
   layer_add_child(root, text_layer_get_layer(s_detail_layer));
 }
 
 static void main_window_unload(Window *w) {
+  status_bar_layer_destroy(s_status_bar);
   text_layer_destroy(s_status_layer);
   text_layer_destroy(s_detail_layer);
 }

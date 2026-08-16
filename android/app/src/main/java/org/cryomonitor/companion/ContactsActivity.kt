@@ -1,11 +1,9 @@
 package org.cryomonitor.companion
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.graphics.Color
-import android.graphics.Typeface
 import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
 import android.text.InputType
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -15,6 +13,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import org.cryomonitor.companion.Ui.title
 import kotlin.concurrent.thread
 
 /**
@@ -24,7 +23,7 @@ import kotlin.concurrent.thread
  * configuration). Server is the source of truth — every edit is an API
  * call with inline field errors.
  */
-class ContactsActivity : Activity() {
+class ContactsActivity : AppCompatActivity() {
 
     private lateinit var settings: SettingsStore
     private lateinit var client: ServerClient
@@ -39,7 +38,7 @@ class ContactsActivity : Activity() {
 
         content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 32, 32, 32)
+            setPadding(Ui.dp(context, 16), Ui.dp(context, 16), Ui.dp(context, 16), Ui.dp(context, 16))
         }
         val root = ScrollView(this).apply { addView(content) }
         Ui.applySystemInsets(root)
@@ -93,7 +92,7 @@ class ContactsActivity : Activity() {
                 text = "Tier ${idx + 1} '${tier.name}': $names\n" +
                     "   $timing; unacknowledged contacts re-alerted every " +
                     "${tier.repeatAfterS / 60} min"
-                setPadding(0, 4, 0, 8)
+                setPadding(0, Ui.dp(context, 4), 0, Ui.dp(context, 8))
             })
         }
 
@@ -145,17 +144,17 @@ class ContactsActivity : Activity() {
 
     private fun header(text: String) = content.addView(TextView(this).apply {
         this.text = text
-        textSize = 18f
-        typeface = Typeface.DEFAULT_BOLD
-        setPadding(0, 24, 0, 8)
+        title()
+        setPadding(0, Ui.dp(context, 24), 0, Ui.dp(context, 8))
     })
 
     private fun banner(text: String) = TextView(this).apply {
         this.text = text
-        setBackgroundColor(Color.rgb(140, 0, 0))
-        setTextColor(Color.WHITE)
-        textSize = 16f
-        setPadding(24, 24, 24, 24)
+        setBackgroundColor(Ui.errorContainer(this))
+        setTextColor(Ui.onErrorContainer(this))
+        title()
+        setPadding(Ui.dp(context, 16), Ui.dp(context, 16),
+                   Ui.dp(context, 16), Ui.dp(context, 16))
     }
 
     // ---- contact editor ----
@@ -164,7 +163,7 @@ class ContactsActivity : Activity() {
         val p = payload ?: return
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 24, 48, 8)
+            setPadding(Ui.dp(context, 24), Ui.dp(context, 12), Ui.dp(context, 24), Ui.dp(context, 4))
         }
         fun field(label: String, value: String?, type: Int): EditText {
             col.addView(TextView(this).apply { text = label })
@@ -268,7 +267,7 @@ class ContactsActivity : Activity() {
     private fun selfNotifyDialog() {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 24, 48, 8)
+            setPadding(Ui.dp(context, 24), Ui.dp(context, 12), Ui.dp(context, 24), Ui.dp(context, 4))
         }
         fun field(label: String): EditText {
             col.addView(TextView(this).apply { text = label })
@@ -281,7 +280,7 @@ class ContactsActivity : Activity() {
         val fEmail = field("Your email")
         col.addView(TextView(this).apply {
             text = "Leave all empty to turn copies off."
-            setPadding(0, 8, 0, 0)
+            setPadding(0, Ui.dp(context, 8), 0, 0)
         })
 
         val dialog = AlertDialog.Builder(this)

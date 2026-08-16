@@ -1,6 +1,7 @@
 package org.cryomonitor.companion
 
 import android.app.Application
+import com.google.android.material.color.DynamicColors
 
 /**
  * Initializes logging before anything else and captures uncaught exceptions
@@ -11,6 +12,7 @@ class CmApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CmLog.init(this)
+        DynamicColors.applyToActivitiesIfAvailable(this)
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, e ->
             runCatching { CmLog.e("CRASH", "uncaught on ${thread.name}", e) }

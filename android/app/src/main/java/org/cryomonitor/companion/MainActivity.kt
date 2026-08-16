@@ -1,14 +1,12 @@
 package org.cryomonitor.companion
 
 import android.Manifest
-import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
-import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Button
@@ -18,9 +16,11 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import org.cryomonitor.companion.Ui.caption
+import org.cryomonitor.companion.Ui.title
 import kotlin.concurrent.thread
 
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity() {
 
     private lateinit var settings: SettingsStore
     private lateinit var degradedBanner: TextView
@@ -34,7 +34,7 @@ class MainActivity : Activity() {
 
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 32, 32, 32)
+            setPadding(Ui.dp(context, 16), Ui.dp(context, 16), Ui.dp(context, 16), Ui.dp(context, 16))
         }
 
         // The safety-net fault banner: as loud as a FAULT, because an alarm
@@ -42,10 +42,11 @@ class MainActivity : Activity() {
         degradedBanner = TextView(this).apply {
             text = "⚠ ALARMS REACH NOBODY — no emergency contacts configured.\n" +
                 "Tap 'Contacts & safety net' and add at least one."
-            setBackgroundColor(Color.rgb(140, 0, 0))
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            setPadding(24, 24, 24, 24)
+            setBackgroundColor(Ui.errorContainer(this))
+            setTextColor(Ui.onErrorContainer(this))
+            title()
+            setPadding(Ui.dp(context, 16), Ui.dp(context, 16),
+                       Ui.dp(context, 16), Ui.dp(context, 16))
             visibility = android.view.View.GONE
             setOnClickListener {
                 startActivity(Intent(this@MainActivity, ContactsActivity::class.java))
@@ -53,12 +54,16 @@ class MainActivity : Activity() {
         }
         col.addView(degradedBanner)
 
-        connState = TextView(this).apply { setPadding(0, 8, 0, 16) }
+        connState = TextView(this).apply {
+            caption()
+            setPadding(0, Ui.dp(context, 8), 0, Ui.dp(context, 16))
+        }
         col.addView(connState)
 
         fun header(t: String) = col.addView(TextView(this).apply {
-            text = t; textSize = 18f; typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 24, 0, 8)
+            text = t
+            title()
+            setPadding(0, Ui.dp(context, 24), 0, Ui.dp(context, 8))
         })
 
         header("Setup")

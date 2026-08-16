@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material 3, light/dark following the system; dynamic color is
+         applied at runtime via DynamicColors (Android 12+). -->
+    <style name="Theme.CryoMonitor" parent="Theme.Material3.DayNight.NoActionBar" />
+</resources>

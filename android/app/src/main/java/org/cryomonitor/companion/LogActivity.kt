@@ -1,16 +1,16 @@
 package org.cryomonitor.companion
 
-import android.app.Activity
 import android.content.Intent
 import android.graphics.Typeface
 import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
 /** In-app log viewer with share/clear (no file manager needed). */
-class LogActivity : Activity() {
+class LogActivity : AppCompatActivity() {
 
     private lateinit var text: TextView
     private lateinit var scroll: ScrollView
@@ -42,7 +42,8 @@ class LogActivity : Activity() {
         text = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             textSize = 11f
-            setPadding(16, 16, 16, 16)
+            setPadding(Ui.dp(context, 12), Ui.dp(context, 12),
+                       Ui.dp(context, 12), Ui.dp(context, 12))
         }
         scroll = ScrollView(this).apply { addView(text) }
         col.addView(scroll)

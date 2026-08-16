@@ -1,6 +1,5 @@
 package org.cryomonitor.companion
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -12,6 +11,7 @@ import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
@@ -24,7 +24,7 @@ import kotlin.concurrent.thread
  * Pre-alarm (watch countdown running) and full alarm differ only in wording;
  * cancelling either sends USER_OK to the watch and retracts escalation.
  */
-class AlarmActivity : Activity() {
+class AlarmActivity : AppCompatActivity() {
 
     private var tone: ToneGenerator? = null
     @Volatile private var sirenOn = false
@@ -44,13 +44,14 @@ class AlarmActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(if (preAlarm) Color.rgb(120, 60, 0) else Color.rgb(140, 0, 0))
-            setPadding(48, 48, 48, 48)
+            setBackgroundColor(if (preAlarm) Color.rgb(133, 84, 0)
+                               else Ui.error(this))
+            setPadding(Ui.dp(context, 24), Ui.dp(context, 24), Ui.dp(context, 24), Ui.dp(context, 24))
         }
         root.addView(TextView(this).apply {
             text = if (preAlarm) "PRE-ALARM: $detector" else "ALARM: $detector"
-            textSize = 30f
-            setTextColor(Color.WHITE)
+            textSize = 32f
+            setTextColor(if (preAlarm) Color.WHITE else Ui.onError(this))
             gravity = Gravity.CENTER
         })
         root.addView(TextView(this).apply {
@@ -59,16 +60,17 @@ class AlarmActivity : Activity() {
             else
                 "Contacts are being alerted.\nCancel if this is a false alarm."
             textSize = 18f
-            setTextColor(Color.WHITE)
+            setTextColor(if (preAlarm) Color.WHITE else Ui.onError(this))
             gravity = Gravity.CENTER
-            setPadding(0, 24, 0, 48)
+            setPadding(0, Ui.dp(context, 16), 0, Ui.dp(context, 32))
         })
         root.addView(Button(this).apply {
             text = "I'M OK — CANCEL"
             textSize = 26f
             setOnClickListener { onCancelPressed() }
         }, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 300).apply { bottomMargin = 32 })
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            Ui.dp(this, 88)).apply { bottomMargin = Ui.dp(this@AlarmActivity, 16) })
         root.addView(Button(this).apply {
             val settings = SettingsStore(this@AlarmActivity)
             text = "CALL ${settings.emergencyNumber}"

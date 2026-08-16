@@ -1,15 +1,16 @@
 package org.cryomonitor.companion
 
-import android.app.Activity
 import android.content.Intent
-import android.graphics.Typeface
 import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
 import android.text.InputType
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import org.cryomonitor.companion.Ui.body
+import org.cryomonitor.companion.Ui.headline
 import kotlin.concurrent.thread
 
 /**
@@ -18,7 +19,7 @@ import kotlin.concurrent.thread
  * server, rejected (invalid/expired/used) code, malformed code, rate
  * limit. The token is stored and never displayed.
  */
-class EnrollActivity : Activity() {
+class EnrollActivity : AppCompatActivity() {
 
     private lateinit var settings: SettingsStore
     private lateinit var status: TextView
@@ -32,17 +33,16 @@ class EnrollActivity : Activity() {
 
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 32, 32, 32)
+            setPadding(Ui.dp(context, 16), Ui.dp(context, 16), Ui.dp(context, 16), Ui.dp(context, 16))
         }
         col.addView(TextView(this).apply {
             text = "Enroll this phone"
-            textSize = 22f
-            typeface = Typeface.DEFAULT_BOLD
+            headline()
         })
         col.addView(TextView(this).apply {
             text = "Ask your operator (or use the admin API) for a one-time " +
                 "enrollment code, then enter it with the server address."
-            setPadding(0, 8, 0, 24)
+            setPadding(0, Ui.dp(context, 8), 0, Ui.dp(context, 24))
         })
 
         col.addView(TextView(this).apply { text = "Server URL" })
@@ -67,7 +67,10 @@ class EnrollActivity : Activity() {
         }
         col.addView(enrollBtn)
 
-        status = TextView(this).apply { setPadding(0, 16, 0, 0) }
+        status = TextView(this).apply {
+            body()
+            setPadding(0, Ui.dp(context, 16), 0, 0)
+        }
         col.addView(status)
 
         val root = ScrollView(this).apply { addView(col) }

@@ -14,6 +14,20 @@ def test_parse_ack_callbacks_filters_and_extracts():
     assert telegram_poll.parse_ack_callbacks(updates) == [(5, "cb1", "tokA")]
 
 
+def test_parse_messages_extracts_onboarding_chats():
+    updates = [
+        {"update_id": 5, "callback_query": {"id": "cb1", "data": "ack:t"}},
+        {"update_id": 6, "message": {"text": "hi",
+                                     "chat": {"id": 42},
+                                     "from": {"first_name": "Ada",
+                                              "last_name": "L"}}},
+        {"update_id": 7, "message": {"text": "x", "chat": {"id": -100500},
+                                     "from": {}}},
+    ]
+    assert telegram_poll.parse_messages(updates) == [
+        (6, 42, "Ada L"), (7, -100500, "unknown")]
+
+
 def test_poll_records_ack_and_advances_offset(appenv, monkeypatch):
     calls = []
 

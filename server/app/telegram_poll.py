@@ -32,6 +32,25 @@ def parse_ack_callbacks(updates: list[dict]) -> list[tuple[int, str, str]]:
     return out
 
 
+def parse_messages(updates: list[dict]) -> list[tuple[int, int, str]]:
+    """[(update_id, chat_id, sender_name)] for plain messages — pure.
+
+    Anyone messaging the bot is onboarding: the loop replies with their
+    chat id so they can hand it to the wearer/operator, and logs it so
+    the operator can read it from the server log.
+    """
+    out = []
+    for u in updates:
+        m = u.get("message") or {}
+        chat = m.get("chat") or {}
+        if chat.get("id") is not None:
+            frm = m.get("from") or {}
+            name = " ".join(x for x in (frm.get("first_name"),
+                                        frm.get("last_name")) if x)
+            out.append((u["update_id"], chat["id"], name or "unknown"))
+    return out
+
+
 def _api(bot_token: str, method: str, params: dict, timeout: float) -> dict:
     url = (f"https://api.telegram.org/bot{bot_token}/{method}?"
            + urllib.parse.urlencode(params))
@@ -48,10 +67,23 @@ async def poll_loop(bot_token: str, store, on_ack: Callable[[str], Awaitable[str
             resp = await asyncio.to_thread(
                 _api, bot_token, "getUpdates",
                 {"timeout": LONG_POLL_S, "offset": offset + 1,
-                 "allowed_updates": '["callback_query"]'},
+                 # messages must stay enabled: restricting storage to
+                 # callbacks makes Telegram DROP contacts' onboarding
+                 # messages before anyone can read their chat id
+                 "allowed_updates": '["message","callback_query"]'},
                 LONG_POLL_S + 10)
             updates = resp.get("result", [])
             if updates:
+                for update_id, chat_id, name in parse_messages(updates):
+                    log.info("telegram onboarding message from chat %s (%s)",
+                             chat_id, name)
+                    await asyncio.to_thread(
+                        _api, bot_token, "sendMessage",
+                        {"chat_id": chat_id,
+                         "text": ("Cryonics Monitor bot. Your chat id is: "
+                                  f"{chat_id}\nGive this number to the "
+                                  "wearer or operator so they can add you "
+                                  "as an emergency contact.")}, 15)
                 for update_id, cq_id, ack_token in parse_ack_callbacks(updates):
                     try:
                         text = await on_ack(ack_token)

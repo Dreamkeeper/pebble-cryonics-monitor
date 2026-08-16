@@ -116,8 +116,13 @@ static void drain_actions(void) {
         notify_app(&a, true);
         break;
 
-      /* Informational: never hijack the watchface for these. */
+      /* Informational: never hijack the watchface for these. A
+       * cancellation also invalidates any parked launch action — the
+       * racing app launch must find nothing rather than a stale alert. */
       case CM_ACT_ALERT_CANCELLED:
+        persist_delete(PK_PENDING_ACTION);
+        notify_app(&a, false);
+        break;
       case CM_ACT_NOTWORN_NAG:
       case CM_ACT_SUSPEND_EXPIRED:
       case CM_ACT_AUTO_RESUMED:

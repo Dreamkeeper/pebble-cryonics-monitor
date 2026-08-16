@@ -160,21 +160,32 @@ class MonitorService : Service(), PebbleTransport.Listener {
 
     private suspend fun watchdogLoop() {
         while (true) {
+            // While Bluetooth is up, app-message silence is EXPECTED in
+            // worker mode (the worker cannot send AppMessages; the phone
+            // only hears the watch while the watchapp is open). A fault is
+            // only a fault when the LINK is gone. Watch-side liveness while
+            // closed arrives with the DataLogging path (M0 spike S5).
             val silentFor = (System.currentTimeMillis() - lastWatchDataT) / 1000
-            if (lastWatchDataT > 0 && silentFor > Protocol.WATCH_SILENT_AFTER_S &&
-                !faultNotified) {
+            if (!watchConnected && lastWatchDataT > 0 &&
+                silentFor > Protocol.WATCH_SILENT_AFTER_S && !faultNotified) {
                 faultNotified = true
-                CmLog.w(TAG, "watch watchdog: silent ${silentFor}s connected=$watchConnected")
-                notifyFault(
-                    if (watchConnected)
-                        "Watch connected but silent ${silentFor}s — worker evicted? " +
-                        "Open the watchapp to restart monitoring."
-                    else
-                        "Watch link lost ${silentFor}s — check Bluetooth/battery.")
-                watchLink.startWatchapp() // best-effort self-heal
+                CmLog.w(TAG, "watch watchdog: link down, silent ${silentFor}s")
+                notifyFault("Watch link lost — check Bluetooth and the " +
+                    "watch battery. Monitoring on the watch continues, but " +
+                    "alarms cannot reach this phone until the link returns.")
+                watchLink.startWatchapp() // best-effort self-heal on reconnect
             }
             updateNotification()
             delay(15_000) // also re-posts the notification (OSD pattern)
+        }
+    }
+
+    private fun humanAge(ms: Long): String {
+        val s = ms / 1000
+        return when {
+            s < 90 -> "${s}s"
+            s < 5400 -> "${s / 60}m"
+            else -> "%.1fh".format(s / 3600.0)
         }
     }
 
@@ -288,15 +299,20 @@ class MonitorService : Service(), PebbleTransport.Listener {
     }
 
     private fun statusLine(): String {
-        val age = if (lastWatchDataT == 0L) "never"
-                  else "${(System.currentTimeMillis() - lastWatchDataT) / 1000}s"
+        // "link" is live Bluetooth truth; "sync" is when the watchAPP last
+        // spoke (only possible while it is open) — two different facts that
+        // must not be conflated into one scary number.
+        val link = if (watchConnected) "watch ✓" else "watch LINK DOWN"
+        val wb = watchBattery?.let { " ${it}%" } ?: ""
+        val sync = if (lastWatchDataT == 0L) ""
+                   else " · synced ${humanAge(
+                       System.currentTimeMillis() - lastWatchDataT)} ago"
         val srv = when {
             !server.configured -> "no server"
-            serverReachable -> "server ok"
+            serverReachable -> "server ✓"
             else -> "SERVER: ${server.lastResult}"
         }
-        val wb = watchBattery?.let { " ${it}%" } ?: ""
-        return "watch $age$wb · $srv"
+        return "$link$wb$sync · $srv"
     }
 
     override fun onDestroy() {

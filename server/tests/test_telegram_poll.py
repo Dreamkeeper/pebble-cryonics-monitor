@@ -11,7 +11,21 @@ def test_parse_ack_callbacks_filters_and_extracts():
         {"update_id": 7, "callback_query": {"id": "cb2", "data": "other"}},
         {"update_id": 8, "callback_query": {"data": "ack:noid"}},   # no id
     ]
-    assert telegram_poll.parse_ack_callbacks(updates) == [(5, "cb1", "tokA")]
+    parsed = telegram_poll.parse_ack_callbacks(updates)
+    assert len(parsed) == 1
+    assert parsed[0]["update_id"] == 5
+    assert parsed[0]["cq_id"] == "cb1"
+    assert parsed[0]["token"] == "tokA"
+
+
+def test_parse_ack_callbacks_carries_message_identity_for_editing():
+    updates = [{"update_id": 9, "callback_query": {
+        "id": "cb9", "data": "ack:tokZ",
+        "message": {"message_id": 77, "chat": {"id": 4242},
+                    "text": "ALERT: someone"}}}]
+    cb = telegram_poll.parse_ack_callbacks(updates)[0]
+    assert (cb["chat_id"], cb["message_id"]) == (4242, 77)
+    assert cb["text"] == "ALERT: someone"
 
 
 def test_parse_messages_extracts_onboarding_chats():

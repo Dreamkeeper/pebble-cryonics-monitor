@@ -236,6 +236,16 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
     snprintf(s_detail_buf, sizeof(s_detail_buf), "stage %u  susp %u min%s",
              (unsigned)m->data0, (unsigned)m->data2, s_debug ? "  DBG" : "");
     text_layer_set_text(s_detail_layer, s_detail_buf);
+    /* Stale-launch guard: the worker launched us for an alert that has
+     * since ended (e.g. motion cancelled it during the launch gap). A
+     * bare "Monitoring" screen the wearer never asked for must not sit
+     * on top of their watchface — hand the screen back. */
+    if (s_launched_by_worker && m->data0 == (uint16_t)CM_STAGE_NONE) {
+      DLOG("stale worker launch: no active stage, returning to watchface");
+      vibes_cancel();
+      if (s_alert_window) window_stack_remove(s_alert_window, true);
+      window_stack_pop_all(false);
+    }
   }
 }
 

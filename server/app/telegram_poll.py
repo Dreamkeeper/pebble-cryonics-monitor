@@ -21,14 +21,24 @@ LONG_POLL_S = 25
 OFFSET_KEY = "tg_poll_offset"
 
 
-def parse_ack_callbacks(updates: list[dict]) -> list[tuple[int, str, str]]:
-    """[(update_id, callback_query_id, ack_token)] — pure, unit-testable."""
+def parse_ack_callbacks(updates: list[dict]) -> list[dict]:
+    """[{update_id, cq_id, token, chat_id, message_id, text}] — pure.
+
+    chat_id/message_id/text identify the message carrying the pressed
+    button so the loop can edit it: button removed, ACKNOWLEDGED marker
+    appended (contacts must see at a glance that someone owns the alarm).
+    """
     out = []
     for u in updates:
         cq = u.get("callback_query") or {}
         data = cq.get("data") or ""
         if data.startswith("ack:") and cq.get("id"):
-            out.append((u["update_id"], cq["id"], data[4:]))
+            msg = cq.get("message") or {}
+            chat = msg.get("chat") or {}
+            out.append({"update_id": u["update_id"], "cq_id": cq["id"],
+                        "token": data[4:], "chat_id": chat.get("id"),
+                        "message_id": msg.get("message_id"),
+                        "text": msg.get("text") or ""})
     return out
 
 
@@ -84,15 +94,28 @@ async def poll_loop(bot_token: str, store, on_ack: Callable[[str], Awaitable[str
                                   f"{chat_id}\nGive this number to the "
                                   "wearer or operator so they can add you "
                                   "as an emergency contact.")}, 15)
-                for update_id, cq_id, ack_token in parse_ack_callbacks(updates):
+                for cb in parse_ack_callbacks(updates):
                     try:
-                        text = await on_ack(ack_token)
+                        text = await on_ack(cb["token"])
                     except Exception:
                         log.exception("ack handler failed")
                         text = "Error recording acknowledgement"
                     await asyncio.to_thread(
                         _api, bot_token, "answerCallbackQuery",
-                        {"callback_query_id": cq_id, "text": text[:190]}, 15)
+                        {"callback_query_id": cb["cq_id"], "text": text[:190]}, 15)
+                    # edit the original message: button gone, outcome visible
+                    if cb["chat_id"] is not None and cb["message_id"] is not None:
+                        marker = ("✅ ACKNOWLEDGED"
+                                  if text.startswith(("Acknowledged", "Already"))
+                                  else f"ℹ️ {text}")
+                        try:
+                            await asyncio.to_thread(
+                                _api, bot_token, "editMessageText",
+                                {"chat_id": cb["chat_id"],
+                                 "message_id": cb["message_id"],
+                                 "text": f"{cb['text']}\n\n{marker}"}, 15)
+                        except Exception as e:
+                            log.warning("ack message edit failed: %s", e)
                 new_offset = max(u["update_id"] for u in updates)
                 await asyncio.to_thread(store.kv_set, OFFSET_KEY, str(new_offset))
         except Exception as e:

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Operator accounts</h2>
+{% if notice %}<p class="muted">{{ notice }}</p>{% endif %}
+{% if error %}<p class="danger">{{ error }}</p>{% endif %}
+<table>
+  <tr><th>Username</th><th>Role</th><th>Status</th><th>Actions</th></tr>
+  {% for o in operators %}
+  <tr>
+    <td>{{ o.username }}</td><td>{{ o.role }}</td>
+    <td>{{ "active" if o.enabled else "disabled" }}</td>
+    <td>
+      <form class="inline" method="post"
+            action="/ui/operators/{{ o.username }}/role">
+        <input type="hidden" name="csrf" value="{{ op.csrf }}">
+        <select name="role">
+          <option {% if o.role == 'responder' %}selected{% endif %}>responder</option>
+          <option {% if o.role == 'admin' %}selected{% endif %}>admin</option>
+        </select>
+        <button>Set role</button>
+      </form>
+      <form class="inline" method="post"
+            action="/ui/operators/{{ o.username }}/password">
+        <input type="hidden" name="csrf" value="{{ op.csrf }}">
+        <input name="password" type="password" placeholder="new password">
+        <button>Reset password</button>
+      </form>
+      <form class="inline" method="post"
+            action="/ui/operators/{{ o.username }}/{{ 'disable' if o.enabled else 'enable' }}">
+        <input type="hidden" name="csrf" value="{{ op.csrf }}">
+        <button>{{ 'Disable' if o.enabled else 'Enable' }}</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+<div class="card">
+  <h3>New operator</h3>
+  <form method="post" action="/ui/operators/create">
+    <input type="hidden" name="csrf" value="{{ op.csrf }}">
+    <input name="username" placeholder="username" required>
+    <input name="password" type="password" placeholder="password" required>
+    <select name="role"><option>responder</option><option>admin</option></select>
+    <button>Create</button>
+  </form>
+</div>
+{% endblock %}

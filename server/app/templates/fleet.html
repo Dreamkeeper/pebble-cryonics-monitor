@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Fleet</h2>
+<div hx-get="/ui/fragments/fleet" hx-trigger="every {{ refresh_s }}s"
+     hx-swap="innerHTML">
+  {% include "_fleet_rows.html" %}
+</div>
+{% if op.role == 'admin' %}
+<div class="card">
+  <h3>New wearer</h3>
+  <form method="post" action="/ui/wearers/create">
+    <input type="hidden" name="csrf" value="{{ op.csrf }}">
+    <input name="id" placeholder="id (kebab-case)" required>
+    <input name="name" placeholder="Display name" required>
+    <button>Create</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

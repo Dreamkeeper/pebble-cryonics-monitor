@@ -52,6 +52,15 @@ def resolve_auth(authorization: str | None, token: str = "") -> Auth | None:
     if not supplied:
         return None
     if ADMIN_TOKEN and secrets.compare_digest(supplied, ADMIN_TOKEN):
+        # Design D5: once the first web admin account exists, the env
+        # credential is retired — one admin auth system, not two.
+        from .operators import admin_accounts_exist
+        if admin_accounts_exist():
+            raise HTTPException(
+                403,
+                "CM_ADMIN_TOKEN is retired: operator accounts exist. Use the "
+                "web dashboard (or an operator session) for administration, "
+                "and remove CM_ADMIN_TOKEN from .env.")
         return Auth(role="admin", wearer_id=None)
     wearer_id = db.wearer_for_token(hash_token(supplied))
     if wearer_id:
@@ -69,7 +78,19 @@ def require_wearer(authorization: str | None = Header(default=None),
     return auth
 
 
-def require_admin(authorization: str | None = Header(default=None)) -> Auth:
+def require_admin(authorization: str | None = Header(default=None),
+                  request: Request | None = None) -> Auth:
+    # Operator sessions (web dashboard) administrate the API too — one
+    # admin auth system after CM_ADMIN_TOKEN retires (design D5).
+    if request is not None:
+        from .operators import current_operator
+        op = current_operator(request)
+        if op is not None:
+            if op.role == "admin":
+                return Auth(role="admin", wearer_id=None)
+            db.add_event(None, "admin_refused",
+                         {"operator": op.username, "surface": "api"})
+            raise HTTPException(403, "admin role required")
     auth = resolve_auth(authorization)
     if auth is None:
         raise HTTPException(401, "bad token")
@@ -157,9 +178,9 @@ class WearerIn(BaseModel):
 
 
 @router.post("/admin/wearers")
-def create_wearer(body: WearerIn,
+def create_wearer(body: WearerIn, request: Request,
                   authorization: str | None = Header(default=None)):
-    require_admin(authorization)
+    require_admin(authorization, request)
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,31}", body.id):
         raise HTTPException(422, "id must be lowercase kebab, 2-32 chars")
     if db.get_wearer(body.id):
@@ -170,15 +191,16 @@ def create_wearer(body: WearerIn,
 
 
 @router.get("/admin/wearers")
-def list_wearers(authorization: str | None = Header(default=None)):
-    require_admin(authorization)
+def list_wearers(request: Request,
+                 authorization: str | None = Header(default=None)):
+    require_admin(authorization, request)
     return {"wearers": db.list_wearers()}
 
 
 @router.post("/admin/wearers/{wearer_id}/disable")
-def disable_wearer(wearer_id: str,
+def disable_wearer(wearer_id: str, request: Request,
                    authorization: str | None = Header(default=None)):
-    require_admin(authorization)
+    require_admin(authorization, request)
     if not db.get_wearer(wearer_id):
         raise HTTPException(404, "unknown wearer")
     db.set_wearer_enabled(wearer_id, False)
@@ -187,9 +209,9 @@ def disable_wearer(wearer_id: str,
 
 
 @router.post("/admin/wearers/{wearer_id}/enable")
-def enable_wearer(wearer_id: str,
+def enable_wearer(wearer_id: str, request: Request,
                   authorization: str | None = Header(default=None)):
-    require_admin(authorization)
+    require_admin(authorization, request)
     if not db.get_wearer(wearer_id):
         raise HTTPException(404, "unknown wearer")
     db.set_wearer_enabled(wearer_id, True)
@@ -198,9 +220,9 @@ def enable_wearer(wearer_id: str,
 
 
 @router.post("/admin/wearers/{wearer_id}/enroll-code")
-def issue_enroll_code(wearer_id: str,
+def issue_enroll_code(wearer_id: str, request: Request,
                       authorization: str | None = Header(default=None)):
-    require_admin(authorization)
+    require_admin(authorization, request)
     w = db.get_wearer(wearer_id)
     if not w or not w["enabled"]:
         raise HTTPException(404, "unknown or disabled wearer")
@@ -212,9 +234,9 @@ def issue_enroll_code(wearer_id: str,
 
 
 @router.post("/admin/wearers/{wearer_id}/revoke-tokens")
-def revoke_tokens(wearer_id: str,
+def revoke_tokens(wearer_id: str, request: Request,
                   authorization: str | None = Header(default=None)):
-    require_admin(authorization)
+    require_admin(authorization, request)
     n = db.revoke_tokens(wearer_id)
     db.add_event(wearer_id, "tokens_revoked", {"count": n})
     return {"revoked": n}

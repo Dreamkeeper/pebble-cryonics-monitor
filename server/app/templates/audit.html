@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Audit log</h2>
+<table>
+  <tr><th>When</th><th>Wearer</th><th>Event</th><th>Detail</th></tr>
+  {% for e in events %}
+  <tr><td class="muted">{{ e.when }}</td><td>{{ e.wearer or "—" }}</td>
+      <td>{{ e.kind }}</td><td class="muted">{{ e.detail }}</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

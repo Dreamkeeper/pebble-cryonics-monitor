@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cryonics Monitor</title>
+  <script src="/ui/static/htmx.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 0 16px 48px;
+           max-width: 1000px; margin-inline: auto; }
+    nav { display: flex; gap: 16px; align-items: center; padding: 12px 0;
+          border-bottom: 1px solid #8884; margin-bottom: 16px; flex-wrap: wrap; }
+    nav .brand { font-weight: 700; }
+    nav .right { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+    a { color: inherit; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #8883; }
+    .state { font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+    .st-alarm    { background: #b00020; color: #fff; }
+    .st-silent   { background: #d84315; color: #fff; }
+    .st-late     { background: #f9a825; color: #000; }
+    .st-degraded { background: #6a1b9a; color: #fff; }
+    .st-offline  { background: #546e7a; color: #fff; }
+    .st-suspended{ background: #1565c0; color: #fff; }
+    .st-ok       { background: #2e7d32; color: #fff; }
+    .st-disabled { background: #8888; }
+    .card { border: 1px solid #8884; border-radius: 8px; padding: 12px 16px;
+            margin: 12px 0; }
+    .danger { color: #b00020; font-weight: 700; }
+    button { padding: 6px 12px; cursor: pointer; }
+    input, select { padding: 6px 8px; margin: 2px 0; }
+    form.inline { display: inline; }
+    .muted { opacity: .7; font-size: .9em; }
+    .bar { display: inline-block; width: 4px; background: #2e7d32;
+           vertical-align: bottom; margin-right: 1px; }
+  </style>
+</head>
+<body {% if op %}hx-headers='{"X-CSRF": "{{ op.csrf }}"}'{% endif %}>
+<nav>
+  <span class="brand">⚕ Cryonics Monitor</span>
+  {% if op %}
+    <a href="/ui/">Fleet</a>
+    {% if op.role == 'admin' %}
+      <a href="/ui/operators">Operators</a>
+      <a href="/ui/audit">Audit</a>
+    {% endif %}
+    <span class="right">
+      <span class="muted">{{ op.username }} ({{ op.role }})</span>
+      <form class="inline" method="post" action="/ui/logout">
+        <input type="hidden" name="csrf" value="{{ op.csrf }}">
+        <button>Log out</button>
+      </form>
+    </span>
+  {% endif %}
+</nav>
+{% block content %}{% endblock %}
+</body>
+</html>

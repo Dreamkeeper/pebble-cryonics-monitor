@@ -19,7 +19,7 @@ import sqlite3
 import time
 import uuid
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -64,6 +64,23 @@ CREATE INDEX IF NOT EXISTS idx_esc_open ON escalations (resolved, wearer_id);
 CREATE INDEX IF NOT EXISTS idx_events_wearer ON events (wearer_id, seq);
 """
 
+_SCHEMA_V2 = """
+CREATE TABLE IF NOT EXISTS operators (
+  username TEXT PRIMARY KEY, pw TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'responder',
+  enabled INTEGER NOT NULL DEFAULT 1, created_t REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions (
+  session_hash TEXT PRIMARY KEY, username TEXT NOT NULL,
+  csrf TEXT NOT NULL, created_t REAL NOT NULL, expires_t REAL NOT NULL,
+  revoked_t REAL);
+CREATE TABLE IF NOT EXISTS login_attempts (
+  key TEXT NOT NULL, t REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts (key, t);
+CREATE TABLE IF NOT EXISTS heartbeat_trail (
+  wearer_id TEXT NOT NULL, t REAL NOT NULL, battery INTEGER);
+CREATE INDEX IF NOT EXISTS idx_hb_trail ON heartbeat_trail (wearer_id, t);
+"""
+
 DEFAULT_TIER = {"name": "primary", "position": 0,
                 "repeat_after_s": 1800, "promote_after_s": 600}
 
@@ -74,8 +91,15 @@ class Store:
         self.path = os.path.join(data_dir, "cryomonitor.db")
         with self._conn() as c:
             c.executescript(_SCHEMA)
-            if c.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 0:
+            row = c.execute("SELECT version FROM schema_version").fetchone()
+            if row is None:
+                c.executescript(_SCHEMA_V2)
+                c.execute("ALTER TABLE deadman ADD COLUMN suspended_until REAL")
                 c.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
+            elif row["version"] < 2:
+                c.executescript(_SCHEMA_V2)
+                c.execute("ALTER TABLE deadman ADD COLUMN suspended_until REAL")
+                c.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
 
     @contextlib.contextmanager
     def _conn(self):
@@ -309,6 +333,113 @@ class Store:
                                  (wearer_id, limit)).fetchall()
         return [{"t": r["t"], "kind": r["kind"], "wearer_id": r["wearer_id"],
                  **json.loads(r["data"])} for r in reversed(rows)]
+
+    # -- operators & sessions (web dashboard) --
+
+    def create_operator(self, username: str, pw_json: str, role: str) -> None:
+        with self._conn() as c:
+            c.execute("INSERT INTO operators (username, pw, role, created_t) "
+                      "VALUES (?,?,?,?)", (username, pw_json, role, time.time()))
+
+    def get_operator(self, username: str) -> dict | None:
+        with self._conn() as c:
+            r = c.execute("SELECT * FROM operators WHERE username=?",
+                          (username,)).fetchone()
+            return dict(r) if r else None
+
+    def list_operators(self) -> list[dict]:
+        with self._conn() as c:
+            return [{k: v for k, v in dict(r).items() if k != "pw"}
+                    for r in c.execute("SELECT * FROM operators ORDER BY created_t")]
+
+    def update_operator(self, username: str, pw_json: str | None = None,
+                        role: str | None = None,
+                        enabled: bool | None = None) -> None:
+        with self._conn() as c:
+            if pw_json is not None:
+                c.execute("UPDATE operators SET pw=? WHERE username=?",
+                          (pw_json, username))
+            if role is not None:
+                c.execute("UPDATE operators SET role=? WHERE username=?",
+                          (role, username))
+            if enabled is not None:
+                c.execute("UPDATE operators SET enabled=? WHERE username=?",
+                          (1 if enabled else 0, username))
+
+    def count_admins(self) -> int:
+        with self._conn() as c:
+            return c.execute("SELECT COUNT(*) FROM operators WHERE role='admin' "
+                             "AND enabled=1").fetchone()[0]
+
+    def create_session(self, session_hash: str, username: str, csrf: str,
+                       expires_t: float) -> None:
+        with self._conn() as c:
+            c.execute("INSERT INTO sessions (session_hash, username, csrf, "
+                      "created_t, expires_t) VALUES (?,?,?,?,?)",
+                      (session_hash, username, csrf, time.time(), expires_t))
+
+    def lookup_session(self, session_hash: str, now: float) -> dict | None:
+        """Valid session joined with an enabled operator, or None."""
+        with self._conn() as c:
+            r = c.execute(
+                """SELECT s.username, s.csrf, s.expires_t, o.role
+                   FROM sessions s JOIN operators o ON o.username = s.username
+                   WHERE s.session_hash=? AND s.revoked_t IS NULL
+                     AND s.expires_t > ? AND o.enabled=1""",
+                (session_hash, now)).fetchone()
+            return dict(r) if r else None
+
+    def revoke_session(self, session_hash: str) -> None:
+        with self._conn() as c:
+            c.execute("UPDATE sessions SET revoked_t=? WHERE session_hash=?",
+                      (time.time(), session_hash))
+
+    def revoke_operator_sessions(self, username: str) -> int:
+        with self._conn() as c:
+            return c.execute("UPDATE sessions SET revoked_t=? WHERE username=? "
+                             "AND revoked_t IS NULL",
+                             (time.time(), username)).rowcount
+
+    def record_login_attempt(self, key: str) -> None:
+        with self._conn() as c:
+            c.execute("INSERT INTO login_attempts (key, t) VALUES (?,?)",
+                      (key, time.time()))
+            c.execute("DELETE FROM login_attempts WHERE t < ?",
+                      (time.time() - 86400,))
+
+    def login_attempts_since(self, key: str, since_t: float) -> int:
+        with self._conn() as c:
+            return c.execute("SELECT COUNT(*) FROM login_attempts WHERE key=? "
+                             "AND t > ?", (key, since_t)).fetchone()[0]
+
+    # -- heartbeat trail (dashboard battery graph) --
+
+    def add_heartbeat_point(self, wearer_id: str, battery: int | None) -> None:
+        with self._conn() as c:
+            c.execute("INSERT INTO heartbeat_trail (wearer_id, t, battery) "
+                      "VALUES (?,?,?)", (wearer_id, time.time(), battery))
+            c.execute("DELETE FROM heartbeat_trail WHERE wearer_id=? AND t < ?",
+                      (wearer_id, time.time() - 48 * 3600))
+
+    def heartbeat_trail(self, wearer_id: str, limit: int = 288) -> list[dict]:
+        with self._conn() as c:
+            rows = c.execute("SELECT t, battery FROM heartbeat_trail WHERE "
+                             "wearer_id=? ORDER BY t DESC LIMIT ?",
+                             (wearer_id, limit)).fetchall()
+            return [dict(r) for r in reversed(rows)]
+
+    def set_suspended_until(self, wearer_id: str, until_t: float | None) -> None:
+        with self._conn() as c:
+            c.execute("""INSERT INTO deadman (wearer_id, suspended_until)
+                         VALUES (?,?) ON CONFLICT(wearer_id) DO UPDATE SET
+                         suspended_until=excluded.suspended_until""",
+                      (wearer_id, until_t))
+
+    def get_suspended_until(self, wearer_id: str) -> float | None:
+        with self._conn() as c:
+            r = c.execute("SELECT suspended_until FROM deadman WHERE wearer_id=?",
+                          (wearer_id,)).fetchone()
+            return r["suspended_until"] if r else None
 
     # -- kv --
 

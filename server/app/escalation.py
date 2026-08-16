@@ -76,6 +76,7 @@ class Escalation:
         self.resolution: str | None = None
         self._contacts: list[_ContactState] = []
         self._activated_tiers: set[str] = set()
+        self._operator_acks: list[str] = []  # dashboard operators who acked
         self._activate_tier(0, started_t)
 
     # -- internal --
@@ -115,6 +116,14 @@ class Escalation:
                 return True
         return False
 
+    def record_operator_ack(self, operator_id: str) -> bool:
+        """A dashboard operator takes ownership: same ACK-gating effect as a
+        contact acknowledgement (stops tier promotion), idempotent."""
+        if operator_id in self._operator_acks:
+            return False
+        self._operator_acks.append(operator_id)
+        return True
+
     def resolve(self, resolution: str) -> None:
         """'false_alarm' (wearer cancelled) or 'handled' (responder confirms)."""
         self.resolved = True
@@ -122,7 +131,7 @@ class Escalation:
 
     @property
     def any_ack(self) -> bool:
-        return any(cs.acked for cs in self._contacts)
+        return any(cs.acked for cs in self._contacts) or bool(self._operator_acks)
 
     # -- the clockwork --
 
@@ -178,6 +187,7 @@ class Escalation:
                      for c in tr.contacts]}
                 for tr in self.tiers],
             "activated_tiers": sorted(self._activated_tiers),
+            "operator_acks": list(self._operator_acks),
             "contact_states": [
                 {"contact_id": cs.contact.id, "tier": cs.tier,
                  "first_due_t": cs.first_due_t, "acked": cs.acked,
@@ -206,6 +216,7 @@ class Escalation:
         esc.resolved = state["resolved"]
         esc.resolution = state["resolution"]
         esc._activated_tiers = set(state["activated_tiers"])
+        esc._operator_acks = list(state.get("operator_acks", []))  # pre-v2 states
         by_id = {c.id: (c, tr.name) for tr in tiers for c in tr.contacts}
         esc._contacts = []
         for cs in state["contact_states"]:

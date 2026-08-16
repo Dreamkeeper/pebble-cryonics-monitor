@@ -17,7 +17,7 @@ import uuid
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from . import telegram_poll
+from . import operators, telegram_poll, ui
 from .channels import build_channels, render_message
 from .deadman import DeadmanConfig, DeadmanMonitor, PhoneState
 from .escalation import AlertKind, Contact, Escalation, Tier
@@ -30,8 +30,9 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 log = logging.getLogger("cryomonitor")
 
-app = FastAPI(title="Pebble Cryonics Monitor Server", version="0.2.0")
+app = FastAPI(title="Pebble Cryonics Monitor Server", version="0.3.0")
 app.include_router(wearers_router)
+app.include_router(ui.router)
 
 PUBLIC_URL = os.environ.get("CM_PUBLIC_URL", "").rstrip("/")
 CHANNELS = build_channels(dict(os.environ))
@@ -146,6 +147,8 @@ def heartbeat(hb: HeartbeatIn, authorization: str | None = Header(default=None))
     if hb.low_battery_warning:
         m.low_battery_notice(t)
     _persist_deadman(auth.wearer_id)
+    db.add_heartbeat_point(auth.wearer_id, hb.phone_battery_pct)
+    db.set_suspended_until(auth.wearer_id, hb.suspended_until)
     log.debug("heartbeat %s battery=%s watch_age=%s", auth.wearer_id,
               hb.phone_battery_pct, hb.watch_data_age_s)
     return {"state": m.state.value, "server_time": t,
@@ -367,6 +370,9 @@ async def _pump_loop():
 async def _startup():
     if legacy_bootstrap():
         log.info("legacy CM_API_TOKEN migrated into wearer 'default'")
+    if operators.bootstrap_admin():
+        log.info("initial web admin bootstrapped from CM_UI_ADMIN_* env; "
+                 "remove those variables from .env now")
     for wid, esc_id, state in db.load_unresolved_escalations():
         escalations[esc_id] = (wid, Escalation.from_state(state))
         log.info("restored active escalation %s for %s", esc_id, wid)

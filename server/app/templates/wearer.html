@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>{{ wearer.name }} <span class="muted">({{ wearer.id }})</span>
+  {% if not wearer.enabled %}<span class="state st-disabled">disabled</span>{% endif %}
+</h2>
+
+<div class="card">
+  {% for s in states %}<span class="state st-{{ s.css }}">{{ s.label }}</span> {% endfor %}
+  <p class="muted">Last heartbeat: {{ last_hb }} · phone battery:
+     {{ battery if battery is not none else "—" }}%</p>
+  <p>Battery trail (48 h):
+    {% for p in trail %}<span class="bar" title="{{ p.battery }}%"
+      style="height: {{ (p.battery or 0) // 4 + 2 }}px"></span>{% endfor %}
+  </p>
+</div>
+
+<h3>Active escalations</h3>
+{% if not active %}<p class="muted">None.</p>{% endif %}
+{% for e in active %}
+<div class="card">
+  <b>{{ e.id }}</b> — {{ e.kind }} / {{ e.detector }}
+  {% if e.any_ack %}<span class="state st-ok">acknowledged</span>
+  {% else %}<span class="state st-alarm">UNACKNOWLEDGED</span>{% endif %}
+  <p class="muted">started {{ e.started }}</p>
+  <form class="inline" method="post" action="/ui/escalations/{{ e.id }}/ack">
+    <input type="hidden" name="csrf" value="{{ op.csrf }}">
+    <button>Acknowledge</button>
+  </form>
+  <form class="inline" method="post" action="/ui/escalations/{{ e.id }}/resolve">
+    <input type="hidden" name="csrf" value="{{ op.csrf }}">
+    <select name="resolution">
+      <option value="handled">handled</option>
+      <option value="false_alarm">false alarm</option>
+    </select>
+    <input name="reason" placeholder="what happened (required)" required>
+    <button>Resolve</button>
+  </form>
+</div>
+{% endfor %}
+
+<h3>Contacts & tiers</h3>
+{% if degraded %}<p class="danger">DEGRADED — alarms for this wearer reach
+nobody. Add a contact with a working channel.</p>{% endif %}
+<table>
+  <tr><th>Name</th><th>Tier</th><th>Telegram</th><th>ntfy</th><th>Email</th>
+      {% if op.role == 'admin' %}<th></th>{% endif %}</tr>
+  {% for c in contacts %}
+  <tr>
+    <td>{{ c.name }}</td><td>{{ c.tier_name }}</td>
+    <td>{{ c.telegram_chat_id or "—" }}</td><td>{{ c.ntfy_topic or "—" }}</td>
+    <td>{{ c.email or "—" }}</td>
+    {% if op.role == 'admin' %}
+    <td><form class="inline" method="post"
+              action="/ui/wearers/{{ wearer.id }}/contacts/{{ c.id }}/delete">
+        <input type="hidden" name="csrf" value="{{ op.csrf }}">
+        <button>✕</button></form></td>
+    {% endif %}
+  </tr>
+  {% endfor %}
+</table>
+<p class="muted">Tiers: {% for t in tiers %}{{ t.name }}
+  (repeat {{ t.repeat_after_s // 60 }} min, promote
+  {{ t.promote_after_s // 60 }} min){% if not loop.last %} → {% endif %}
+{% endfor %}</p>
+
+{% if op.role == 'admin' %}
+<div class="card">
+  <h4>Add / edit contact</h4>
+  <form method="post" action="/ui/wearers/{{ wearer.id }}/contacts">
+    <input type="hidden" name="csrf" value="{{ op.csrf }}">
+    <input name="name" placeholder="Name" required>
+    <select name="tier_name">
+      {% for t in tiers %}<option>{{ t.name }}</option>{% endfor %}
+    </select>
+    <input name="telegram_chat_id" placeholder="Telegram chat id">
+    <input name="ntfy_topic" placeholder="ntfy topic">
+    <input name="email" placeholder="email">
+    <button>Save</button>
+    {% if contact_error %}<span class="danger">{{ contact_error }}</span>{% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <h4>Administration</h4>
+  <form class="inline" method="post" action="/ui/wearers/{{ wearer.id }}/enroll-code">
+    <input type="hidden" name="csrf" value="{{ op.csrf }}">
+    <button>Issue enrollment code</button>
+  </form>
+  <form class="inline" method="post" action="/ui/wearers/{{ wearer.id }}/revoke-tokens">
+    <input type="hidden" name="csrf" value="{{ op.csrf }}">
+    <button>Revoke phone tokens</button>
+  </form>
+  <form class="inline" method="post" action="/ui/wearers/{{ wearer.id }}/drill">
+    <input type="hidden" name="csrf" value="{{ op.csrf }}">
+    <button>🔔 Fire drill</button>
+  </form>
+  <form class="inline" method="post"
+        action="/ui/wearers/{{ wearer.id }}/{{ 'disable' if wearer.enabled else 'enable' }}">
+    <input type="hidden" name="csrf" value="{{ op.csrf }}">
+    <button>{{ 'Disable wearer' if wearer.enabled else 'Enable wearer' }}</button>
+  </form>
+  {% if enroll_code %}
+    <p class="danger">Enrollment code (shown once): <b>{{ enroll_code }}</b></p>
+  {% endif %}
+  {% if notice %}<p class="muted">{{ notice }}</p>{% endif %}
+</div>
+{% endif %}
+
+<h3>Recent events</h3>
+<table>
+  {% for e in events %}
+  <tr><td class="muted">{{ e.when }}</td><td>{{ e.kind }}</td>
+      <td class="muted">{{ e.detail }}</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

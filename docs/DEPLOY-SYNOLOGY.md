@@ -173,6 +173,31 @@ no restart needed.
 in `.env` for the first boot — the server migrates it into wearer
 `default` automatically and the already-configured phone keeps working.
 
+## Web dashboard (server v0.3+)
+
+The operator dashboard lives at `https://<your-host>/ui/` — same process,
+same hostname, TLS from DSM, nothing new to expose.
+
+**First login**: set `CM_UI_ADMIN_USER` and `CM_UI_ADMIN_PASSWORD` in
+`.env`, restart the project once — the initial admin account is created
+from them exactly once — then **remove both lines from `.env`**. Log in
+at `/ui/login` and manage further accounts under Operators.
+
+**Roles**: `admin` (everything) and `responder` (view fleet + wearer
+detail, acknowledge and resolve escalations; no administration).
+Create one responder account per response-group member.
+
+**CM_ADMIN_TOKEN is retired** the moment the first admin account exists:
+API admin calls with the env token return 403 with a pointed message.
+Admin API routes accept operator sessions instead; remove
+`CM_ADMIN_TOKEN` from `.env` after the dashboard bootstrap.
+
+**Hardening**: login is rate-limited (5 attempts / 15 min per account
+and per address) and every failure is audited (Audit page). Passwords
+are scrypt-hashed; sessions are HttpOnly+Secure cookies revocable
+server-side (password reset and account disable kill live sessions).
+Keep the dashboard behind HTTPS only.
+
 ## Backing up the database
 
 State (wearers, contacts, escalations, ACK tokens, event log) lives in

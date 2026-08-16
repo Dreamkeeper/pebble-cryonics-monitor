@@ -84,15 +84,15 @@
       contacts via curl until the app UI lands), per-wearer DEGRADED
       semantics, SQLite backup guidance (backup API or stop-copy —
       never live-copy the WAL pair)
-- [ ] 5.3 Deploy to DKNexus via the documented no-sudo path; verify
+- [x] 5.3 Deploy to DKNexus via the documented no-sudo path; verify
       legacy bootstrap kept the existing phone authenticating; create
       the owner's real contacts via API; confirm wearer not DEGRADED
-- [ ] 5.4 Live fire-drill TEST through Telegram/ntfy/email with ACK
+- [x] 5.4 Live fire-drill TEST through Telegram/ntfy/email with ACK
       round-trip on each channel; then restart the container
       mid-TEST-escalation and verify recovery on the NAS (the scenario
       that motivated this change)
 - [x] 5.5 Log the deployment in `HOMELAB-INFRASTRUCTURE-STATE.md` and
       add the CryoMonitor data volume to the SSD boot guard / daily
       backup per the runbook's standing note
-- [ ] 5.6 Sync delta specs into `openspec/specs/` (escalation-and-
+- [x] 5.6 Sync delta specs into `openspec/specs/` (escalation-and-
       deadman modified, wearer-management new) and archive the change

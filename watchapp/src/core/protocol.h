@@ -14,8 +14,11 @@ enum {
   PK_SUSPEND_UNTIL = 4,   /* epoch seconds; survives worker restart */
   PK_SUSPEND_AUTORESUME = 5,
   PK_DEBUG = 6,           /* 1 = extensive APP_LOG output (app + worker) */
-  PK_DRILL_FIRE_MS = 7    /* wall-clock ms when the worker fired the latency
+  PK_DRILL_FIRE_MS = 7,   /* wall-clock ms when the worker fired the latency
                              drill (worker and app share the clock) */
+  PK_DRILL_ARM_MS = 8     /* wall-clock ms when the worker was armed; lets the
+                             phone subtract ALL watch-side time (arm->result)
+                             instead of guessing the countdown duration */
 };
 
 /* AppWorkerMessage types (uint8). data0/data1/data2 per type. */

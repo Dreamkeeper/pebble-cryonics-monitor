@@ -138,17 +138,21 @@ class MonitorService : Service(), PebbleTransport.Listener {
             }
             Protocol.PMSG_DRILL_RESULT -> {
                 val launchMs = (data[PebbleTransport.KEY_SECONDS] as? Int) ?: 0
-                // phone-path = round trip minus the worker's fixed wait;
-                // includes BT transport both ways and the launch itself.
-                val phonePath = if (drillT0 > 0)
-                    System.currentTimeMillis() - drillT0 - Protocol.DRILL_DELAY_MS
-                    else null
+                // The watch reports its own arm->result time; subtracting it
+                // from our round trip leaves pure BT transport (both ways).
+                // Never guess the countdown duration — it is tick-aligned.
+                val watchMs = (data[PebbleTransport.KEY_HEARTBEAT_SEQ] as? Int) ?: 0
+                val rtt = if (drillT0 > 0)
+                    System.currentTimeMillis() - drillT0 else null
+                val transport = if (rtt != null && watchMs > 0) rtt - watchMs else null
                 drillT0 = 0
                 CmLog.i(TAG, "LATENCY DRILL: worker->app launch=${launchMs}ms " +
-                    "phone-path=${phonePath}ms model=${Build.MODEL}")
+                    "watch-total=${watchMs}ms rtt=${rtt}ms bt-transport=${transport}ms " +
+                    "model=${Build.MODEL}")
                 scope.launch {
                     if (server.configured)
-                        server.drillResult(launchMs, phonePath, Build.MODEL)
+                        server.drillResult(launchMs, rtt, watchMs, transport,
+                                           Build.MODEL)
                 }
             }
             Protocol.PMSG_NOTWORN -> {

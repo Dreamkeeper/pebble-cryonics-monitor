@@ -268,15 +268,28 @@ static void handle_action(const cm_action *a) {
       vibes_short_pulse();  /* TODO show "check-in due in N min" */
       break;
     case CM_ACT_LATENCY_DRILL: {
-      /* S1: worker stamped its fire time on our shared wall clock; the
-       * delta is the true cold path worker->launch->this handler. */
+      /* S1: worker stamped arm + fire times on our shared wall clock.
+       * launch = fire -> here (the true cold path). watch_total =
+       * arm -> result handoff; the phone subtracts it from its round
+       * trip to get pure BT transport, instead of guessing how long
+       * the worker's tick-aligned countdown actually took. */
       uint32_t fire = (uint32_t)persist_read_int(PK_DRILL_FIRE_MS);
+      uint32_t arm = (uint32_t)persist_read_int(PK_DRILL_ARM_MS);
       persist_delete(PK_DRILL_FIRE_MS);
-      uint32_t delta = fire ? app_now_ms() - fire : 0;
+      persist_delete(PK_DRILL_ARM_MS);
+      uint32_t now = app_now_ms();
+      uint32_t delta = fire ? now - fire : 0;
+      uint32_t watch_total = arm ? now - arm : 0;
       vibes_short_pulse();
-      cm_action r = {.type = a->type, .detector = 0, .reason = 0,
-                     .seconds = (uint16_t)(delta > 65000 ? 65000 : delta)};
-      send_to_phone(PMSG_DRILL_RESULT, &r);
+      DictionaryIterator *out;
+      if (app_message_outbox_begin(&out) == APP_MSG_OK) {
+        dict_write_uint8(out, MESSAGE_KEY_MSG_TYPE, PMSG_DRILL_RESULT);
+        dict_write_uint16(out, MESSAGE_KEY_SECONDS,
+                          (uint16_t)(delta > 65000 ? 65000 : delta));
+        dict_write_uint16(out, MESSAGE_KEY_HEARTBEAT_SEQ,
+                          (uint16_t)(watch_total > 65000 ? 65000 : watch_total));
+        app_message_outbox_send();
+      }
       s_drill_hold_ticks = 5;
       snprintf(s_detail_buf, sizeof(s_detail_buf),
                "Latency drill:\nlaunch %u ms", (unsigned)delta);

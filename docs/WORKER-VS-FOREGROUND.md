@@ -80,6 +80,43 @@ coexist with our PebbleKit Android companion, so weather data would
 have to come from the companion over the same AppMessage channel.
 License is compatible (GPL-3.0 both ways).
 
+## What about a real watchface + worker? (owner proposal, 2026-08-18)
+
+The tempting variant: package the worker with a genuine *watchface*
+(watchfaces CAN carry workers — sleep trackers do exactly this), so the
+wearer's default screen is the monitor. What it would buy and cost:
+
+**Gains over today's worker mode:**
+- Passive glanceability: monitoring status + time on the default
+  screen, no app launch needed. That is the whole list.
+
+**What breaks — and why it's structural, not fixable:**
+1. **The alert ladder loses its buttons.** Watchfaces get no Select/
+   Up/Down/Back input, so "press SELECT if you're OK", UP-suspend,
+   DOWN-hold-SOS, and countdown cancel cannot exist on the watch. Those
+   are stages 2–3 of the false-positive firewall; moving all
+   cancellation to the phone reintroduces the exact failure mode the
+   watch-first design avoids (phone in another room during a false
+   alarm → contacts get called).
+2. **The worker can't summon a different UI.** `worker_launch_app()`
+   launches only *its own* .pbw's binary — the watchface. A second
+   .pbw with an interactive alert app cannot be launched by our worker
+   (no cross-app launch API), so there is no "watchface for status +
+   app for alerts" split within Pebble OS.
+3. A watchface process *can* vibrate and use AppMessage once running,
+   so a degraded ladder ("watchface buzzes, answer on the phone") is
+   technically possible — but it downgrades every interaction and
+   still costs the wearer their preferred watchface, the same price as
+   foreground mode without foreground mode's buttons.
+
+**Verdict:** a watchface+worker package strictly loses to the fused
+foreground *app*: identical always-on display and identical worker, but
+the app keeps all four buttons for the ladder (with a Back-guard),
+while the watchface keeps none. The watchface variant only makes sense
+if we someday want a *status-mirror-only* face for wearers who keep
+monitoring interactions on the phone deliberately — worth revisiting
+after M3, not as the primary architecture.
+
 ## Recommendation (unchanged from the plan, now evidence-backed)
 
 Keep **worker mode as the default**; ship **foreground mode as the

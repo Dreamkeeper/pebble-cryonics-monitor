@@ -139,7 +139,9 @@ class OfflineWindowIn(BaseModel):
 class DrillResultIn(BaseModel):
     token: str = ""
     launch_ms: int
-    phone_path_ms: int | None = None
+    rtt_ms: int | None = None        # phone round trip, drill send -> result
+    watch_ms: int | None = None      # watch-side total, arm -> result handoff
+    transport_ms: int | None = None  # rtt - watch = pure BT both ways
     phone_model: str = ""
 
 
@@ -174,10 +176,12 @@ def drill_result(r: DrillResultIn,
     """M0 spike S1: latency drill measurements, collected per phone model."""
     auth = require_wearer(authorization, r.token)
     db.add_event(auth.wearer_id, "latency_drill",
-                 {"launch_ms": r.launch_ms, "phone_path_ms": r.phone_path_ms,
+                 {"launch_ms": r.launch_ms, "rtt_ms": r.rtt_ms,
+                  "watch_ms": r.watch_ms, "transport_ms": r.transport_ms,
                   "phone_model": r.phone_model[:64]})
-    log.info("latency drill %s: launch=%sms phone_path=%sms model=%s",
-             auth.wearer_id, r.launch_ms, r.phone_path_ms, r.phone_model)
+    log.info("latency drill %s: launch=%sms rtt=%sms watch=%sms "
+             "transport=%sms model=%s", auth.wearer_id, r.launch_ms,
+             r.rtt_ms, r.watch_ms, r.transport_ms, r.phone_model)
     return {"ok": True}
 
 

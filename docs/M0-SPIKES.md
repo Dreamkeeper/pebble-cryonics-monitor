@@ -28,27 +28,31 @@ Instrumentation shipped for these spikes (watchapp ≥ v0.3.5, server ≥
 - **Android logs**: Debug mode → View logs; every PebbleKit2 receive is
   timestamped to the millisecond.
 
-## S1 — Worker alarm path latency — 🟡 path proven, number pending
+## S1 — Worker alarm path latency — ✅ GO (measured 2026-08-18)
+
+**Result:** first drill on the Time 2 + Xiaomi 17 Ultra (25128PNA1C):
+**worker→app cold launch = 71 ms** — two orders of magnitude under the
+3 s gate. Vibration follows within the same handler. (The first run's
+"phone-path −482 ms" exposed an arithmetic bug — the phone subtracted a
+guessed 10 s countdown, but the worker's timer is tick-aligned; since
+v0.3.7 the watch reports its own arm→result total and the phone derives
+pure BT transport instead.) Keep running the drill on new phone models;
+results accumulate as `latency_drill` events per model.
 **Question:** How long from `worker_launch_app()` in the background worker to
 (a) first vibration and (b) AppMessage delivered to the Android companion?
-**Field evidence (2026-08-16/18, E2E T2):** the full chain works —
-watch SOS → countdown UI + vibration → phone full-screen alarm + siren →
-Telegram, ~15 s end-to-end *including* server and Telegram legs. The
-watch→phone leg is subjectively a second or two.
-**To get the number — automated latency drill** (watchapp ≥ v0.3.6,
+**How to re-run — automated latency drill** (watchapp ≥ v0.3.6,
 companion ≥ v0.3.4): press **"Run watch latency drill"** in the Android
 app (Diagnostics), or **"⏱ Latency drill"** on the wearer's dashboard
 page (queued; the phone picks it up on its next heartbeat, ≤5 min).
-Sequence: the watchapp opens, closes itself, and 10 s later the worker
+Sequence: the watchapp opens, closes itself, and ~10 s later the worker
 fires a synthetic alert through the REAL cold alarm path — the watch
-relaunches, buzzes, and shows `launch N ms`. Two numbers are recorded
-as a `latency_drill` event in the wearer's Recent events, tagged with
-the phone model (so results accumulate per phone over time):
+relaunches, buzzes, and shows `launch N ms`. Recorded per run in the
+wearer's Recent events, tagged with the phone model:
 - `launch_ms` — worker fire → app alive, watch-clock precise;
-- `phone_path_ms` — full round trip minus the 10 s wait (adds BT
-  transport both ways and the result message).
-**Go:** < 3 s end-to-end. **No-go fallback:** persistent foreground mode becomes default.
-**Result:** functional PASS in the field; drill numbers _pending_.
+- `watch_ms` — arm → result handoff, watch-clock;
+- `rtt_ms` / `transport_ms` — phone round trip, and rtt − watch_ms =
+  pure BT transport both ways.
+**Go:** < 3 s end-to-end — **met** (71 ms + sub-second transport).
 
 ## S2 — Worker survival across reboot / battery death — 🟡 10-min manual run
 **Question:** Does the background worker auto-restart after a watch reboot or

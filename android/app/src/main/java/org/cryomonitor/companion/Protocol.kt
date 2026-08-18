@@ -19,10 +19,8 @@ object Protocol {
     const val PMSG_SET_DEBUG = 9
     const val PMSG_NOTWORN = 10
     const val PMSG_DRILL = 11          // phone->watch: start S1 latency drill
-    const val PMSG_DRILL_RESULT = 12   // watch->phone: SECONDS = launch ms
-
-    // Worker waits this long after the app closes before firing the drill.
-    const val DRILL_DELAY_MS = 10_000L
+    const val PMSG_DRILL_RESULT = 12   // watch->phone: SECONDS = launch ms,
+                                       // HEARTBEAT_SEQ = watch arm->result ms
 
     // Detectors (mirrors cm_detector)
     val DETECTOR_NAMES = listOf(

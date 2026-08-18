@@ -53,7 +53,8 @@ def test_latency_drill_command_delivered_exactly_once(appenv):
     assert "command" not in second
 
     r = appenv.client.post("/api/v1/drill-result",
-                           json={"launch_ms": 812, "phone_path_ms": 1650,
+                           json={"launch_ms": 71, "rtt_ms": 9459,
+                                 "watch_ms": 9100, "transport_ms": 359,
                                  "phone_model": "TestPhone 9"},
                            headers=wearer_headers())
     assert r.status_code == 200

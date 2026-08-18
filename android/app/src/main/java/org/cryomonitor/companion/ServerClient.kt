@@ -169,10 +169,13 @@ class ServerClient(
                             val command: String? = null)
 
     /** S1 latency drill result -> server event log (per phone model). */
-    fun drillResult(launchMs: Int, phonePathMs: Long?, model: String): Boolean =
+    fun drillResult(launchMs: Int, rttMs: Long?, watchMs: Int,
+                    transportMs: Long?, model: String): Boolean =
         call("POST", "/api/v1/drill-result", JSONObject().apply {
             put("launch_ms", launchMs)
-            phonePathMs?.let { put("phone_path_ms", it) }
+            rttMs?.let { put("rtt_ms", it) }
+            if (watchMs > 0) put("watch_ms", watchMs)
+            transportMs?.let { put("transport_ms", it) }
             put("phone_model", model)
         }) != null
 

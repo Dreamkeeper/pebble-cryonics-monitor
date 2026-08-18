@@ -22,9 +22,13 @@
 - [x] 2.1 Server suite green (68) incl. exactly-once command delivery
       and drill-result event test
 - [x] 2.2 Clean pbw + APK builds
-- [ ] 2.3 Owner field run: drill from the app button, then from the
-      dashboard; go-gate launch_ms + vibe < 3 s; record numbers in
-      docs/M0-SPIKES.md S1
+- [x] 2.3 Owner field run (2026-08-18, app button): launch=71 ms —
+      go-gate met by two orders of magnitude; recorded in M0-SPIKES S1.
+      First run exposed the phone-path arithmetic bug (guessed 10 s vs
+      tick-aligned countdown) -> watch now reports arm->result total,
+      phone derives pure BT transport (launch/watch/rtt/transport)
+- [ ] 2.4 Dashboard-queued drill path exercised once (command channel
+      end-to-end on hardware)
 
 ## 3. Wrap-up
 

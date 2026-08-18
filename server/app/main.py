@@ -136,6 +136,13 @@ class OfflineWindowIn(BaseModel):
     duration_s: int
 
 
+class DrillResultIn(BaseModel):
+    token: str = ""
+    launch_ms: int
+    phone_path_ms: int | None = None
+    phone_model: str = ""
+
+
 # ---- phone endpoints (wearer-scoped) ----
 
 @app.post("/api/v1/heartbeat")
@@ -152,8 +159,26 @@ def heartbeat(hb: HeartbeatIn, authorization: str | None = Header(default=None))
     db.set_suspended_until(auth.wearer_id, hb.suspended_until)
     log.debug("heartbeat %s battery=%s watch_age=%s", auth.wearer_id,
               hb.phone_battery_pct, hb.watch_data_age_s)
-    return {"state": m.state.value, "server_time": t,
+    resp = {"state": m.state.value, "server_time": t,
             "degraded": wearer_degraded(auth.wearer_id)}
+    cmd = db.pop_command(auth.wearer_id)
+    if cmd:
+        resp["command"] = cmd
+        db.add_event(auth.wearer_id, "command_delivered", {"command": cmd})
+    return resp
+
+
+@app.post("/api/v1/drill-result")
+def drill_result(r: DrillResultIn,
+                 authorization: str | None = Header(default=None)):
+    """M0 spike S1: latency drill measurements, collected per phone model."""
+    auth = require_wearer(authorization, r.token)
+    db.add_event(auth.wearer_id, "latency_drill",
+                 {"launch_ms": r.launch_ms, "phone_path_ms": r.phone_path_ms,
+                  "phone_model": r.phone_model[:64]})
+    log.info("latency drill %s: launch=%sms phone_path=%sms model=%s",
+             auth.wearer_id, r.launch_ms, r.phone_path_ms, r.phone_model)
+    return {"ok": True}
 
 
 @app.post("/api/v1/offline-window")

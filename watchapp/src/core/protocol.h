@@ -13,7 +13,9 @@ enum {
   PK_MODE = 3,            /* 0 = worker mode, 1 = persistent foreground mode */
   PK_SUSPEND_UNTIL = 4,   /* epoch seconds; survives worker restart */
   PK_SUSPEND_AUTORESUME = 5,
-  PK_DEBUG = 6            /* 1 = extensive APP_LOG output (app + worker) */
+  PK_DEBUG = 6,           /* 1 = extensive APP_LOG output (app + worker) */
+  PK_DRILL_FIRE_MS = 7    /* wall-clock ms when the worker fired the latency
+                             drill (worker and app share the clock) */
 };
 
 /* AppWorkerMessage types (uint8). data0/data1/data2 per type. */
@@ -25,7 +27,10 @@ enum {
   WMSG_SOS = 5,           /* app->worker */
   WMSG_STATUS_REQ = 6,    /* app->worker: request status push */
   WMSG_STATUS = 7,        /* worker->app: data0=stage, data1=last_bpm, data2=suspend_remaining_min */
-  WMSG_SET_DEBUG = 8      /* app->worker: data0 = 0/1 */
+  WMSG_SET_DEBUG = 8,     /* app->worker: data0 = 0/1 */
+  WMSG_DRILL = 9          /* app->worker: run the S1 latency drill — wait
+                             CM_DRILL_DELAY_S, then fire a synthetic
+                             worker_launch_app() alert */
 };
 
 /* MSG_TYPE values for AppMessage to/from the phone. */
@@ -39,8 +44,14 @@ enum {
   PMSG_CONFIG_ACK = 7,    /* watch->phone */
   PMSG_USER_OK_REMOTE = 8,/* phone->watch: user cancelled on the phone */
   PMSG_SET_DEBUG = 9,     /* phone->watch: SECONDS key carries 0/1 */
-  PMSG_NOTWORN = 10       /* watch->phone: off-wrist nag (wearer-only, never contacts) */
+  PMSG_NOTWORN = 10,      /* watch->phone: off-wrist nag (wearer-only, never contacts) */
+  PMSG_DRILL = 11,        /* phone->watch: start the S1 latency drill */
+  PMSG_DRILL_RESULT = 12  /* watch->phone: SECONDS = worker-fire -> app-alive ms */
 };
+
+/* S1 latency drill: the worker waits this long after the app closes before
+ * firing, so the measured launch is a genuine cold start. */
+#define CM_DRILL_DELAY_S 10
 
 /* Heartbeat cadence (watch -> phone) while connected. */
 #define CM_HEARTBEAT_INTERVAL_S 60

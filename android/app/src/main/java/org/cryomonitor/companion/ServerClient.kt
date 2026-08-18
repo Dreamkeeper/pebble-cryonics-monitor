@@ -161,10 +161,20 @@ class ServerClient(
             watchDataAgeS?.let { put("watch_data_age_s", it) }
             put("low_battery_warning", lowBatteryWarning)
         }) ?: return null
-        return HeartbeatAck(resp.optString("state"), resp.optBoolean("degraded"))
+        return HeartbeatAck(resp.optString("state"), resp.optBoolean("degraded"),
+                            resp.optString("command").ifEmpty { null })
     }
 
-    data class HeartbeatAck(val state: String, val degraded: Boolean)
+    data class HeartbeatAck(val state: String, val degraded: Boolean,
+                            val command: String? = null)
+
+    /** S1 latency drill result -> server event log (per phone model). */
+    fun drillResult(launchMs: Int, phonePathMs: Long?, model: String): Boolean =
+        call("POST", "/api/v1/drill-result", JSONObject().apply {
+            put("launch_ms", launchMs)
+            phonePathMs?.let { put("phone_path_ms", it) }
+            put("phone_model", model)
+        }) != null
 
     fun alarm(detector: String, kind: String, lat: Double?, lon: Double?): String? {
         val resp = call("POST", "/api/v1/alarm", JSONObject().apply {

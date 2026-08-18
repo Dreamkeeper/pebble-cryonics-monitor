@@ -41,6 +41,26 @@ def test_heartbeat_trail_stores_both_batteries(appenv):
     assert trail[0]["watch_battery"] == 80
 
 
+def test_latency_drill_command_delivered_exactly_once(appenv):
+    """M0 spike S1: dashboard queues a drill; the phone gets it on one
+    heartbeat only; the result lands in the event log."""
+    appenv.store.queue_command("default", "latency_drill")
+    first = appenv.client.post("/api/v1/heartbeat", json={},
+                               headers=wearer_headers()).json()
+    assert first.get("command") == "latency_drill"
+    second = appenv.client.post("/api/v1/heartbeat", json={},
+                                headers=wearer_headers()).json()
+    assert "command" not in second
+
+    r = appenv.client.post("/api/v1/drill-result",
+                           json={"launch_ms": 812, "phone_path_ms": 1650,
+                                 "phone_model": "TestPhone 9"},
+                           headers=wearer_headers())
+    assert r.status_code == 200
+    kinds = [e["kind"] for e in appenv.store.recent_events("default", limit=10)]
+    assert "latency_drill" in kinds
+
+
 def test_bad_credentials_rejected(appenv):
     for hdr in ["Bearer wrong", "Basic testtoken", "testtoken", ""]:
         r = appenv.client.get("/api/v1/status",

@@ -39,6 +39,15 @@ static char s_alert_count_buf[8];
 static AppTimer *s_alert_timer;
 static cm_action s_alert_action;
 static uint16_t s_alert_seconds_left;
+/* S1 latency drill: keep the app alive a few seconds after sending the
+ * result so the outbox flushes before the stale-launch guard pops us. */
+static uint8_t s_drill_hold_ticks;
+
+static uint32_t app_now_ms(void) {
+  time_t s; uint16_t ms;
+  time_ms(&s, &ms);
+  return (uint32_t)s * 1000u + ms;
+}
 
 /* ---------- phone link ---------- */
 
@@ -87,6 +96,15 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
     case PMSG_USER_OK_REMOTE: {
       AppWorkerMessage m = {0};
       app_worker_send_message(WMSG_USER_OK, &m);
+      break;
+    }
+    case PMSG_DRILL: {
+      /* Arm the worker, then get out of the way: the measured launch must
+       * be a genuine cold start, not a foreground handoff. */
+      AppWorkerMessage m = {0};
+      app_worker_send_message(WMSG_DRILL, &m);
+      APP_LOG(APP_LOG_LEVEL_INFO, "latency drill: armed worker, exiting");
+      window_stack_pop_all(false);
       break;
     }
     default: break;
@@ -249,6 +267,23 @@ static void handle_action(const cm_action *a) {
     case CM_ACT_CHECKIN_REMINDER:
       vibes_short_pulse();  /* TODO show "check-in due in N min" */
       break;
+    case CM_ACT_LATENCY_DRILL: {
+      /* S1: worker stamped its fire time on our shared wall clock; the
+       * delta is the true cold path worker->launch->this handler. */
+      uint32_t fire = (uint32_t)persist_read_int(PK_DRILL_FIRE_MS);
+      persist_delete(PK_DRILL_FIRE_MS);
+      uint32_t delta = fire ? app_now_ms() - fire : 0;
+      vibes_short_pulse();
+      cm_action r = {.type = a->type, .detector = 0, .reason = 0,
+                     .seconds = (uint16_t)(delta > 65000 ? 65000 : delta)};
+      send_to_phone(PMSG_DRILL_RESULT, &r);
+      s_drill_hold_ticks = 5;
+      snprintf(s_detail_buf, sizeof(s_detail_buf),
+               "Latency drill:\nlaunch %u ms", (unsigned)delta);
+      text_layer_set_text(s_detail_layer, s_detail_buf);
+      APP_LOG(APP_LOG_LEVEL_INFO, "latency drill: launch=%u ms", (unsigned)delta);
+      break;
+    }
     case CM_ACT_SUSPEND_STARTED:
       snprintf(s_status_buf, sizeof(s_status_buf), "Suspended %u min",
                (unsigned)(a->seconds / 60u));
@@ -313,7 +348,7 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
      * bare "Monitoring" screen the wearer never asked for must not sit
      * on top of their watchface — hand the screen back. A nag launch is
      * NOT stale: it deliberately has no ladder stage. */
-    if (s_launched_by_worker && !s_nag_hold &&
+    if (s_launched_by_worker && !s_nag_hold && s_drill_hold_ticks == 0 &&
         m->data0 == (uint16_t)CM_STAGE_NONE && m->data2 == 0) {
       DLOG("stale worker launch: no active stage, returning to watchface");
       vibes_cancel();
@@ -410,6 +445,7 @@ static void main_window_unload(Window *w) {
  * BT connection events — documented v0.1 limitation.) */
 static void app_tick(struct tm *tick_time, TimeUnits changed) {
   static uint16_t s_hb_seq = 0;
+  if (s_drill_hold_ticks) s_drill_hold_ticks--;
   /* Poll worker state so the status line stays truthful (suspension
    * countdown, auto-resume, ladder stage) — cheap worker IPC, no radio. */
   if (tick_time->tm_sec % 5 == 0) {

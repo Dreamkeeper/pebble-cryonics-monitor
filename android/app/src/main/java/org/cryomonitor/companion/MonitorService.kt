@@ -34,6 +34,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
 
     @Volatile private var lastWatchDataT = 0L
     @Volatile private var watchBattery: Int? = null
+    @Volatile private var drillT0 = 0L   // S1 latency drill start (epoch ms)
     @Volatile private var watchConnected = false
     @Volatile private var faultNotified = false
     @Volatile private var serverReachable = true
@@ -134,6 +135,21 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 CmLog.i(TAG, "suspension from watch: " +
                     if (secs > 0) "for ${secs}s" else "ended")
                 updateNotification()
+            }
+            Protocol.PMSG_DRILL_RESULT -> {
+                val launchMs = (data[PebbleTransport.KEY_SECONDS] as? Int) ?: 0
+                // phone-path = round trip minus the worker's fixed wait;
+                // includes BT transport both ways and the launch itself.
+                val phonePath = if (drillT0 > 0)
+                    System.currentTimeMillis() - drillT0 - Protocol.DRILL_DELAY_MS
+                    else null
+                drillT0 = 0
+                CmLog.i(TAG, "LATENCY DRILL: worker->app launch=${launchMs}ms " +
+                    "phone-path=${phonePath}ms model=${Build.MODEL}")
+                scope.launch {
+                    if (server.configured)
+                        server.drillResult(launchMs, phonePath, Build.MODEL)
+                }
             }
             Protocol.PMSG_NOTWORN -> {
                 CmLog.w(TAG, "watch reports not worn")
@@ -288,6 +304,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 CmLog.d(TAG, "server heartbeat ok=$ok phoneBatt=$pct watchAge=$age " +
                     "degraded=${ack?.degraded}")
                 if (ack != null) onDegradedState(ack.degraded)
+                if (ack?.command == "latency_drill") runLatencyDrill()
                 if (!ok && serverReachable) {
                     serverReachable = false
                     CmLog.w(TAG, "server unreachable")
@@ -327,6 +344,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     "result=${server.lastResult})")
                 updateNotification()
             }
+            ACTION_LATENCY_DRILL -> runLatencyDrill()
             ACTION_SET_DEBUG -> {
                 val on = intent.getBooleanExtra("enabled", false)
                 CmLog.debugEnabled = on
@@ -338,6 +356,25 @@ class MonitorService : Service(), PebbleTransport.Listener {
             }
         }
         return START_STICKY
+    }
+
+    /**
+     * S1 latency drill: measure the real worker->launch->AppMessage alarm
+     * path. Opens the watchapp, arms the worker (which waits a fixed
+     * DRILL_DELAY after the app exits, then fires a synthetic alert through
+     * the genuine cold path), and times the round trip. Results land in
+     * CmLog and the server event feed with the phone model attached.
+     */
+    private fun runLatencyDrill() {
+        CmLog.i(TAG, "latency drill: starting (open watchapp, arm worker)")
+        scope.launch {
+            watchLink.startWatchapp()
+            delay(3_000) // let the watchapp come up and register its inbox
+            drillT0 = System.currentTimeMillis()
+            watchLink.send(mapOf(
+                PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_DRILL))
+            // Result arrives as PMSG_DRILL_RESULT in ~DRILL_DELAY + latency.
+        }
     }
 
     /** DEGRADED = alarms would reach nobody. That is a fault, treated like
@@ -425,5 +462,6 @@ class MonitorService : Service(), PebbleTransport.Listener {
         const val ACTION_ALERT_CANCELLED = "org.cryomonitor.ALERT_CANCELLED"
         const val ACTION_SET_DEBUG = "org.cryomonitor.SET_DEBUG"
         const val ACTION_HEARTBEAT_NOW = "org.cryomonitor.HEARTBEAT_NOW"
+        const val ACTION_LATENCY_DRILL = "org.cryomonitor.LATENCY_DRILL"
     }
 }

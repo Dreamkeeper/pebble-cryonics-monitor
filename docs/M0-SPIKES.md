@@ -35,12 +35,20 @@ Instrumentation shipped for these spikes (watchapp ≥ v0.3.5, server ≥
 watch SOS → countdown UI + vibration → phone full-screen alarm + siren →
 Telegram, ~15 s end-to-end *including* server and Telegram legs. The
 watch→phone leg is subjectively a second or two.
-**To get the number:** debug ON both sides; trigger a check-in (sit
-still through a pulse hunt, or SOS); subtract the watch's launch DLOG
-timestamp (via `pebble logs`) from the Android CmLog receive timestamp.
-Low-tech variant: film watch + phone side by side during an SOS.
+**To get the number — automated latency drill** (watchapp ≥ v0.3.6,
+companion ≥ v0.3.4): press **"Run watch latency drill"** in the Android
+app (Diagnostics), or **"⏱ Latency drill"** on the wearer's dashboard
+page (queued; the phone picks it up on its next heartbeat, ≤5 min).
+Sequence: the watchapp opens, closes itself, and 10 s later the worker
+fires a synthetic alert through the REAL cold alarm path — the watch
+relaunches, buzzes, and shows `launch N ms`. Two numbers are recorded
+as a `latency_drill` event in the wearer's Recent events, tagged with
+the phone model (so results accumulate per phone over time):
+- `launch_ms` — worker fire → app alive, watch-clock precise;
+- `phone_path_ms` — full round trip minus the 10 s wait (adds BT
+  transport both ways and the result message).
 **Go:** < 3 s end-to-end. **No-go fallback:** persistent foreground mode becomes default.
-**Result:** functional PASS in the field; latency measurement _pending_.
+**Result:** functional PASS in the field; drill numbers _pending_.
 
 ## S2 — Worker survival across reboot / battery death — 🟡 10-min manual run
 **Question:** Does the background worker auto-restart after a watch reboot or

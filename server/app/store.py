@@ -428,6 +428,23 @@ class Store:
             c.execute("DELETE FROM heartbeat_trail WHERE wearer_id=? AND t < ?",
                       (wearer_id, time.time() - 48 * 3600))
 
+    # -- phone command queue (kv-backed; one pending command per wearer) --
+
+    def queue_command(self, wearer_id: str, command: str) -> None:
+        with self._conn() as c:
+            c.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?,?)",
+                      (f"cmd:{wearer_id}", command))
+
+    def pop_command(self, wearer_id: str) -> str | None:
+        """Return and clear the pending command — delivered exactly once."""
+        with self._conn() as c:
+            row = c.execute("SELECT value FROM kv WHERE key=?",
+                            (f"cmd:{wearer_id}",)).fetchone()
+            if row is None:
+                return None
+            c.execute("DELETE FROM kv WHERE key=?", (f"cmd:{wearer_id}",))
+            return row["value"]
+
     def heartbeat_trail(self, wearer_id: str, limit: int = 288) -> list[dict]:
         with self._conn() as c:
             rows = c.execute("SELECT t, battery, watch_battery FROM heartbeat_trail WHERE "

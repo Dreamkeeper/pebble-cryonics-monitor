@@ -17,6 +17,7 @@ static cm_core s_core;
 static uint8_t s_hr_burst_active;
 static uint16_t s_heartbeat_countdown = CM_HEARTBEAT_INTERVAL_S;
 static uint16_t s_last_bpm;            /* last raw HR reading (0 = none) */
+static uint16_t s_drill_countdown;     /* S1 latency drill: seconds to fire */
 static DataLoggingSessionRef s_log_session;
 
 /* ---- debug mode (toggled from the phone; view with `pebble logs`) ---- */
@@ -207,6 +208,16 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   cm_tick(&s_core, now_ms(), (uint8_t)tick_time->tm_hour);
   drain_actions();
 
+  /* S1 latency drill: fire a synthetic alert through the REAL alarm path
+   * (persist handoff + worker_launch_app) and stamp the fire time so the
+   * app can compute the cold-launch latency on a shared clock. */
+  if (s_drill_countdown && --s_drill_countdown == 0) {
+    cm_action a = {.type = CM_ACT_LATENCY_DRILL, .detector = 0, .seconds = 0};
+    persist_write_int(PK_DRILL_FIRE_MS, (int32_t)now_ms());
+    notify_app(&a, true);
+    APP_LOG(APP_LOG_LEVEL_INFO, "latency drill fired");
+  }
+
   if (--s_heartbeat_countdown == 0) {
     s_heartbeat_countdown = CM_HEARTBEAT_INTERVAL_S;
     log_heartbeat();
@@ -236,6 +247,10 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
       break;
     case WMSG_SOS: cm_manual_sos(&s_core, now_ms()); break;
     case WMSG_STATUS_REQ: push_status_to_app(); break;
+    case WMSG_DRILL:
+      s_drill_countdown = CM_DRILL_DELAY_S;
+      APP_LOG(APP_LOG_LEVEL_INFO, "latency drill armed (%us)", CM_DRILL_DELAY_S);
+      break;
     case WMSG_SET_DEBUG:
       s_debug = (uint8_t)m->data0;
       persist_write_int(PK_DEBUG, s_debug);

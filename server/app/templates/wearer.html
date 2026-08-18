@@ -69,6 +69,10 @@ nobody. Add a contact with a working channel.</p>{% endif %}
     <input type="hidden" name="csrf" value="{{ op.csrf }}">
     <button>🔔 Fire drill</button>
   </form>
+  <form class="inline" method="post" action="/ui/wearers/{{ wearer.id }}/latency-drill">
+    <input type="hidden" name="csrf" value="{{ op.csrf }}">
+    <button>⏱ Latency drill</button>
+  </form>
   <form class="inline" method="post"
         action="/ui/wearers/{{ wearer.id }}/{{ 'disable' if wearer.enabled else 'enable' }}">
     <input type="hidden" name="csrf" value="{{ op.csrf }}">

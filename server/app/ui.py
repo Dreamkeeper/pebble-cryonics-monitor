@@ -362,6 +362,18 @@ async def ui_drill(request: Request, wid: str):
     return RedirectResponse(f"/ui/wearers/{wid}", status_code=303)
 
 
+@router.post("/wearers/{wid}/latency-drill")
+async def ui_latency_drill(request: Request, wid: str):
+    op = ops.require_ui_admin(request)
+    await ops.verify_csrf(request, op)
+    db.queue_command(wid, "latency_drill")
+    db.add_event(wid, "latency_drill_queued", {"operator": op.username})
+    return _render_wearer(request, op, wid,
+                          notice="Latency drill queued — the phone picks it "
+                                 "up on its next heartbeat (≤5 min); the "
+                                 "result appears in Recent events.")
+
+
 @router.post("/wearers/{wid}/disable")
 async def ui_disable_wearer(request: Request, wid: str):
     op = ops.require_ui_admin(request)

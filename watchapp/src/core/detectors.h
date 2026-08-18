@@ -69,7 +69,9 @@ typedef enum {
   CM_ACT_CHECKIN_REMINDER, /* shell: vibrate "check-in due in N min"; .seconds until due */
   CM_ACT_SUSPEND_STARTED,  /* .seconds = duration */
   CM_ACT_SUSPEND_EXPIRED,
-  CM_ACT_AUTO_RESUMED      /* wear signals returned early; monitoring resumed */
+  CM_ACT_AUTO_RESUMED,     /* wear signals returned early; monitoring resumed */
+  CM_ACT_LATENCY_DRILL     /* M0 S1 test tooling: synthetic launch, no ladder.
+                              Emitted by the worker shell, never by the core. */
 } cm_action_type;
 
 typedef enum {

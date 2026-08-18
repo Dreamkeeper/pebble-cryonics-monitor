@@ -109,6 +109,17 @@ class MainActivity : AppCompatActivity() {
             }
         })
         col.addView(Button(this).apply {
+            text = "Run watch latency drill (M0 S1)"
+            setOnClickListener {
+                startService(Intent(this@MainActivity, MonitorService::class.java)
+                    .setAction(MonitorService.ACTION_LATENCY_DRILL))
+                Toast.makeText(this@MainActivity,
+                    "Drill running: watchapp opens, closes, relaunches with a " +
+                    "buzz in ~13 s. Result lands in the logs and the dashboard.",
+                    Toast.LENGTH_LONG).show()
+            }
+        })
+        col.addView(Button(this).apply {
             text = "View logs"
             setOnClickListener {
                 startActivity(Intent(this@MainActivity, LogActivity::class.java))

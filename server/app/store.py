@@ -19,7 +19,7 @@ import sqlite3
 import time
 import uuid
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -95,11 +95,16 @@ class Store:
             if row is None:
                 c.executescript(_SCHEMA_V2)
                 c.execute("ALTER TABLE deadman ADD COLUMN suspended_until REAL")
+                c.execute("ALTER TABLE heartbeat_trail ADD COLUMN watch_battery INTEGER")
                 c.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
-            elif row["version"] < 2:
-                c.executescript(_SCHEMA_V2)
-                c.execute("ALTER TABLE deadman ADD COLUMN suspended_until REAL")
-                c.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
+            else:
+                if row["version"] < 2:
+                    c.executescript(_SCHEMA_V2)
+                    c.execute("ALTER TABLE deadman ADD COLUMN suspended_until REAL")
+                if row["version"] < 3:  # M0 spike S6: watch battery drain trail
+                    c.execute("ALTER TABLE heartbeat_trail ADD COLUMN watch_battery INTEGER")
+                if row["version"] < SCHEMA_VERSION:
+                    c.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
 
     @contextlib.contextmanager
     def _conn(self):
@@ -414,16 +419,18 @@ class Store:
 
     # -- heartbeat trail (dashboard battery graph) --
 
-    def add_heartbeat_point(self, wearer_id: str, battery: int | None) -> None:
+    def add_heartbeat_point(self, wearer_id: str, battery: int | None,
+                            watch_battery: int | None = None) -> None:
         with self._conn() as c:
-            c.execute("INSERT INTO heartbeat_trail (wearer_id, t, battery) "
-                      "VALUES (?,?,?)", (wearer_id, time.time(), battery))
+            c.execute("INSERT INTO heartbeat_trail (wearer_id, t, battery, "
+                      "watch_battery) VALUES (?,?,?,?)",
+                      (wearer_id, time.time(), battery, watch_battery))
             c.execute("DELETE FROM heartbeat_trail WHERE wearer_id=? AND t < ?",
                       (wearer_id, time.time() - 48 * 3600))
 
     def heartbeat_trail(self, wearer_id: str, limit: int = 288) -> list[dict]:
         with self._conn() as c:
-            rows = c.execute("SELECT t, battery FROM heartbeat_trail WHERE "
+            rows = c.execute("SELECT t, battery, watch_battery FROM heartbeat_trail WHERE "
                              "wearer_id=? ORDER BY t DESC LIMIT ?",
                              (wearer_id, limit)).fetchall()
             return [dict(r) for r in reversed(rows)]

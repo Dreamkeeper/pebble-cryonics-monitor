@@ -16,6 +16,7 @@
 static cm_core s_core;
 static uint8_t s_hr_burst_active;
 static uint16_t s_heartbeat_countdown = CM_HEARTBEAT_INTERVAL_S;
+static uint16_t s_last_bpm;            /* last raw HR reading (0 = none) */
 static DataLoggingSessionRef s_log_session;
 
 /* ---- debug mode (toggled from the phone; view with `pebble logs`) ---- */
@@ -63,10 +64,15 @@ static uint32_t now_ms(void) {
 }
 
 static void push_status_to_app(void) {
-  /* Minutes round UP: a fresh 30-min suspension reads "30", not "29". */
+  /* Minutes round UP: a fresh 30-min suspension reads "30", not "29".
+   * data1 packs the M0 spike telemetry (S4 raw HR, S8 heap headroom):
+   * low byte = last raw bpm (capped 255), high byte = free heap / 64 B. */
+  uint32_t heap = heap_bytes_free();
+  if (heap > 255u * 64u) heap = 255u * 64u;
   AppWorkerMessage m = {
     .data0 = (uint16_t)cm_current_stage(&s_core),
-    .data1 = 0, /* TODO: cache last bpm */
+    .data1 = (uint16_t)((s_last_bpm > 255 ? 255 : s_last_bpm) |
+                        ((heap / 64u) << 8)),
     .data2 = (uint16_t)((cm_suspend_remaining_s(&s_core, now_ms()) + 59u) / 60u),
   };
   app_worker_send_message(WMSG_STATUS, &m);
@@ -174,9 +180,10 @@ static void accel_handler(AccelData *data, uint32_t num_samples) {
 static void health_handler(HealthEventType event, void *context) {
   if (event == HealthEventHeartRateUpdate || event == HealthEventSignificantUpdate) {
     HealthValue bpm = health_service_peek_current_value(HealthMetricHeartRateRawBPM);
+    s_last_bpm = bpm > 0 ? (uint16_t)bpm : 0;
     if (s_debug) {
       s_dbg_hr_updates++;
-      s_dbg_last_bpm = bpm > 0 ? (uint16_t)bpm : 0;
+      s_dbg_last_bpm = s_last_bpm;
       DLOG("hr raw=%d burst=%u", (int)bpm, s_hr_burst_active);
     }
     cm_hr_feed(&s_core, bpm > 0 ? (uint16_t)bpm : 0, now_ms());
@@ -190,7 +197,7 @@ static void log_heartbeat(void) {
     .epoch_s = (uint32_t)time(NULL),
     .stage = (uint8_t)cm_current_stage(&s_core),
     .battery_pct = battery_state_service_peek().charge_percent,
-    .last_bpm = 0, /* TODO: cache last reading */
+    .last_bpm = (uint8_t)(s_last_bpm > 255 ? 255 : s_last_bpm),
     .suspended = s_core.suspended,
   };
   data_logging_log(s_log_session, &rec, 1);

@@ -147,7 +147,8 @@ def heartbeat(hb: HeartbeatIn, authorization: str | None = Header(default=None))
     if hb.low_battery_warning:
         m.low_battery_notice(t)
     _persist_deadman(auth.wearer_id)
-    db.add_heartbeat_point(auth.wearer_id, hb.phone_battery_pct)
+    db.add_heartbeat_point(auth.wearer_id, hb.phone_battery_pct,
+                           hb.watch_battery_pct)
     db.set_suspended_until(auth.wearer_id, hb.suspended_until)
     log.debug("heartbeat %s battery=%s watch_age=%s", auth.wearer_id,
               hb.phone_battery_pct, hb.watch_data_age_s)

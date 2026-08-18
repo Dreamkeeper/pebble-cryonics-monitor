@@ -45,8 +45,8 @@ as interchangeable, and treated any pulse reading as trustworthy.
 - A perfectly gentle removal (no detected handling motion) still runs
   the ladder → absorbed by the phone cancel, as before.
 - Phantom pulse readings while off-body can postpone the not-worn nag.
-  M0 spike S6 (new): record what HealthMetricHeartRateRawBPM reports on
-  a table / against fabric on the Time 2.
+  M0 spike S4 covers this: record what HealthMetricHeartRateRawBPM
+  reports on a table / against fabric on the Time 2.
 
 ## Impact
 

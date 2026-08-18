@@ -29,6 +29,18 @@ def test_bearer_and_legacy_query_token_both_work(appenv):
     assert legacy.status_code == 200
 
 
+def test_heartbeat_trail_stores_both_batteries(appenv):
+    """M0 spike S6: watch battery drain is measured from the trail."""
+    r = appenv.client.post("/api/v1/heartbeat",
+                           json={"phone_battery_pct": 70,
+                                 "watch_battery_pct": 80},
+                           headers=wearer_headers())
+    assert r.status_code == 200
+    trail = appenv.store.heartbeat_trail("default")
+    assert trail and trail[0]["battery"] == 70
+    assert trail[0]["watch_battery"] == 80
+
+
 def test_bad_credentials_rejected(appenv):
     for hdr in ["Bearer wrong", "Basic testtoken", "testtoken", ""]:
         r = appenv.client.get("/api/v1/status",

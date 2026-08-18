@@ -287,8 +287,13 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
     handle_action(&a);
   } else if (type == WMSG_STATUS) {
     if (s_debug) {
-      snprintf(s_detail_buf, sizeof(s_detail_buf), "stage %u  susp %u min  DBG",
-               (unsigned)m->data0, (unsigned)m->data2);
+      /* M0 spike telemetry from the worker (S4 + S8): raw bpm low byte,
+       * free worker heap in 64 B units high byte. */
+      snprintf(s_detail_buf, sizeof(s_detail_buf),
+               "st%u susp%um DBG\nbpm %u · heap %uB",
+               (unsigned)m->data0, (unsigned)m->data2,
+               (unsigned)(m->data1 & 0xFF),
+               (unsigned)((m->data1 >> 8) * 64u));
       text_layer_set_text(s_detail_layer, s_detail_buf);
     }
     /* Keep the big status line truthful: the worker owns the state, the

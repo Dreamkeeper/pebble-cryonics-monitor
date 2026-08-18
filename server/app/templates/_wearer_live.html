@@ -3,7 +3,7 @@
   <p class="muted">Last heartbeat: {{ last_hb }} · phone battery:
      {{ battery if battery is not none else "—" }}%</p>
   <p>Battery trail (48 h):
-    {% for p in trail %}<span class="bar" title="{{ p.battery }}%"
+    {% for p in trail %}<span class="bar" title="phone {{ p.battery }}%{% if p.watch_battery is not none %} · watch {{ p.watch_battery }}%{% endif %}"
       style="height: {{ (p.battery or 0) // 4 + 2 }}px"></span>{% endfor %}
   </p>
 </div>

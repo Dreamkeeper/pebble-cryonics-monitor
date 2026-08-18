@@ -95,17 +95,21 @@ using HR-signal-presence + accel variance together.
 **Result:** _pending_ (field hint 2026-08-18: watch on table appeared to
 keep a "pulse" — phantom readings likely; quantify here)
 
-## S5 — DataLogging heartbeat latency — 🔴 needs the Android receiver
+## S5 — DataLogging heartbeat latency — 🟡 receiver shipped, run the field hour
 **Question:** When BT-connected, how quickly does a DataLogging session
 flush to Android? Is PebbleKit2's DataLogging support functional?
-**State:** the worker already logs a 8-byte `cm_heartbeat_rec` (epoch,
-stage, battery, last_bpm, suspended) every 60 s into a DataLogging
-session — the watch half of the spike is running in production today.
-The Android half (a `PebbleDataLogReceiver`, possibly via the Classic
-API alongside PK2 — that coexistence IS part of the question) does not
-exist yet. Propose as the next OpenSpec change: `companion-watch-liveness`.
-**Method once built:** compare `rec.epoch_s` to Android receive time over
-an hour of normal wear; median + p95.
+**State:** BOTH halves shipped. Watch: 8-byte `cm_heartbeat_rec` every
+60 s (tag 0xC201) since v0.1. Phone (companion ≥ v0.3.8): a legacy-
+protocol DataLogging receiver (PK2 1.2.0 has none — verified against
+the library binaries) that ACKs records, refreshes the "synced" age and
+watch battery, logs per-record flush latency + running median, and
+raises a worker-eviction FAULT if records ever flow and then stop.
+**Method:** wear the watch ≥1 h with the watchapp CLOSED. Then Android
+app → View logs: `WORKER HEARTBEAT via DataLogging ... flush-latency=Ns`
+and `S5: ... median=Ns`. The notification's `synced` age staying fresh
+with the app closed is the visible pass. **No records at all after an
+hour** = the Core app does not emit the legacy broadcasts → NO-GO,
+fall back to the hourly worker status sync.
 **Go:** median flush < 60 s → worker heartbeat channel; kills the
 "synced 22443s" ambiguity for good (M0-S5 note in MonitorService).
 **No-go fallback:** periodic `worker_launch_app()` status sync (hourly) +

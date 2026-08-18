@@ -30,4 +30,7 @@ object Protocol {
     // Watch heartbeat cadence; the watchdog fires after missing several.
     const val WATCH_HEARTBEAT_INTERVAL_S = 60
     const val WATCH_SILENT_AFTER_S = 300
+    // Worker DataLogging records: fault after this much silence while the
+    // link is up (only armed once records have ever arrived).
+    const val WORKER_SILENT_AFTER_S = 600
 }

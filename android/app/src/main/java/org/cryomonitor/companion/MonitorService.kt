@@ -36,6 +36,9 @@ class MonitorService : Service(), PebbleTransport.Listener {
     @Volatile private var watchBattery: Int? = null
     @Volatile private var drillT0 = 0L   // S1 latency drill start (epoch ms)
     @Volatile private var chargingHold = false  // watch on charger = paused
+    @Volatile private var workerLastRecT = 0L   // last DataLogging record (arrival)
+    @Volatile private var workerFaultNotified = false
+    private val dlFlushLatencies = ArrayDeque<Long>() // S5 stats, last 30
     @Volatile private var watchConnected = false
     @Volatile private var faultNotified = false
     @Volatile private var serverReachable = true
@@ -103,6 +106,14 @@ class MonitorService : Service(), PebbleTransport.Listener {
 
         when (data[PebbleTransport.KEY_MSG_TYPE] as? Int) {
             Protocol.PMSG_HEARTBEAT -> {
+                // Re-sync the debug flag while the watchapp is open: a
+                // toggle flipped while the app was closed would otherwise
+                // be lost (AppMessage needs an open inbox) — the field
+                // finding behind "no debug line on the watch".
+                watchLink.send(mapOf(
+                    PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_SET_DEBUG,
+                    PebbleTransport.KEY_SECONDS to
+                        (if (settings.debugLogging) 1 else 0)))
                 CmLog.d(TAG, "watch heartbeat seq=${data[PebbleTransport.KEY_HEARTBEAT_SEQ]} " +
                     "batt=$watchBattery")
                 updateNotification()
@@ -280,12 +291,13 @@ class MonitorService : Service(), PebbleTransport.Listener {
     // ---- loops ----
 
     private suspend fun watchdogLoop() {
+        var flushTick = 0
         while (true) {
             // While Bluetooth is up, app-message silence is EXPECTED in
             // worker mode (the worker cannot send AppMessages; the phone
             // only hears the watch while the watchapp is open). A fault is
-            // only a fault when the LINK is gone. Watch-side liveness while
-            // closed arrives with the DataLogging path (M0 spike S5).
+            // only a fault when the LINK is gone — or, once DataLogging
+            // heartbeats have ever flowed, when they stop (worker evicted).
             val silentFor = (System.currentTimeMillis() - lastWatchDataT) / 1000
             if (!watchConnected && lastWatchDataT > 0 &&
                 silentFor > Protocol.WATCH_SILENT_AFTER_S && !faultNotified) {
@@ -296,6 +308,22 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     "alarms cannot reach this phone until the link returns.")
                 watchLink.startWatchapp() // best-effort self-heal on reconnect
             }
+            // Worker-eviction watchdog: only armed once records have ever
+            // arrived (so it stays quiet until S5 proves the channel).
+            val workerSilent = (System.currentTimeMillis() - workerLastRecT) / 1000
+            if (watchConnected && workerLastRecT > 0 &&
+                workerSilent > Protocol.WORKER_SILENT_AFTER_S &&
+                !workerFaultNotified) {
+                workerFaultNotified = true
+                CmLog.w(TAG, "worker heartbeats stopped (${workerSilent}s) — evicted?")
+                notifyFault("The watch background worker stopped reporting " +
+                    "(possibly evicted by another background app). " +
+                    "Relaunching the watchapp to restore monitoring.")
+                watchLink.startWatchapp() // relaunching the app re-arms the worker
+            }
+            // Ask the phone's Pebble app to flush buffered worker records
+            // once a minute (every 4th 15 s tick).
+            if (flushTick++ % 4 == 0) DataLogReceiver.requestFlush(this)
             updateNotification()
             delay(15_000) // also re-posts the notification (OSD pattern)
         }
@@ -364,6 +392,31 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 updateNotification()
             }
             ACTION_LATENCY_DRILL -> runLatencyDrill()
+            ACTION_WORKER_HEARTBEAT -> {
+                // The background worker's DataLogging record made it over —
+                // this is watch liveness WITHOUT the watchapp being open
+                // (M0 S5). Treat it as watch data: the synced age, watch
+                // battery, and the server's watch_data_age become honest.
+                workerLastRecT = System.currentTimeMillis()
+                lastWatchDataT = workerLastRecT
+                intent.getIntExtra("battery", -1)
+                    .takeIf { it in 0..100 }?.let { watchBattery = it }
+                val flushS = intent.getLongExtra("flush_s", -1)
+                if (flushS >= 0) {
+                    synchronized(dlFlushLatencies) {
+                        dlFlushLatencies.addLast(flushS)
+                        while (dlFlushLatencies.size > 30) dlFlushLatencies.removeFirst()
+                        val median = dlFlushLatencies.sorted()[dlFlushLatencies.size / 2]
+                        CmLog.i(TAG, "S5: worker record flush=${flushS}s " +
+                            "median=${median}s over ${dlFlushLatencies.size}")
+                    }
+                }
+                if (workerFaultNotified) {
+                    workerFaultNotified = false
+                    CmLog.i(TAG, "worker heartbeats resumed")
+                }
+                updateNotification()
+            }
             ACTION_SET_DEBUG -> {
                 val on = intent.getBooleanExtra("enabled", false)
                 CmLog.debugEnabled = on
@@ -417,10 +470,18 @@ class MonitorService : Service(), PebbleTransport.Listener {
             CHANNEL_ID, "Monitoring", NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel(
             CHANNEL_FAULT, "System faults", NotificationManager.IMPORTANCE_HIGH))
+        // The status-bar glyph tells the state at a glance: heartbeat trace
+        // = all well; bluetooth-off = watch link down (the critical leg);
+        // cloud-off = server leg down (phone-direct fallback active).
+        val icon = when {
+            !watchConnected -> R.drawable.ic_stat_watch_off
+            server.configured && !serverReachable -> R.drawable.ic_stat_server_off
+            else -> R.drawable.ic_stat_monitor
+        }
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Cryonics Monitor")
             .setContentText(text)
-            .setSmallIcon(R.drawable.ic_stat_monitor)
+            .setSmallIcon(icon)
             .setOngoing(true)
             .setContentIntent(openAppIntent())
             .build()
@@ -494,5 +555,6 @@ class MonitorService : Service(), PebbleTransport.Listener {
         const val ACTION_SET_DEBUG = "org.cryomonitor.SET_DEBUG"
         const val ACTION_HEARTBEAT_NOW = "org.cryomonitor.HEARTBEAT_NOW"
         const val ACTION_LATENCY_DRILL = "org.cryomonitor.LATENCY_DRILL"
+        const val ACTION_WORKER_HEARTBEAT = "org.cryomonitor.WORKER_HEARTBEAT"
     }
 }

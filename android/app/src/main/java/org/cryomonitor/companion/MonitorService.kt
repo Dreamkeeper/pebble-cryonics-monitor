@@ -420,7 +420,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Cryonics Monitor")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setSmallIcon(R.drawable.ic_stat_monitor)
             .setOngoing(true)
             .setContentIntent(openAppIntent())
             .build()

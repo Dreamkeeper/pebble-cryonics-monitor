@@ -22,7 +22,7 @@ never auto-dials them.
 
 | Directory | What it is |
 |---|---|
-| [`watchapp/`](watchapp/) | Pebble app (C, SDK 4.x): background-worker or persistent-foreground monitoring, on-watch alert ladder, suspension menu. Targets `emery`, `diorite`, `flint`, `gabbro`. |
+| [`watchapp/`](watchapp/) | Pebble app (C, SDK 4.x): background-worker monitoring (71 ms alarm-path launch, measured), on-watch alert ladder, suspension menu, charging hold. Targets `emery`, `diorite`, `flint`, `gabbro`. |
 | [`android/`](android/) | Android companion (Kotlin): foreground service, watch watchdog, full-screen alarm with cancel window, phone-direct SMS/call/Telegram fallback escalation, server link, enrollment-by-code onboarding, contact/tier/self-notify management. |
 | [`server/`](server/) | Self-hosted backend (Python/FastAPI, Docker): phone dead-man monitoring, tiered escalation with delivery ACK + retry via Telegram/email/ntfy, web dashboard, learning-mode pattern miner. |
 | [`docs/`](docs/) | Product plan, threshold rationale, M0 feasibility-spike checklist. |
@@ -37,8 +37,6 @@ never auto-dials them.
   (FDA De Novo) and Apple Watch Fall/Crash Detection.
 - Detection thresholds informed by [cryonicsmonitoring.org](https://www.cryonicsmonitoring.org)
   and the Cryonics Institute Check-In escalation ladder.
-- Foreground watchface mode incorporates rendering from
-  [YaForecasWatch2](https://github.com/Dreamkeeper/YaForecasWatch2) (GPL-3.0).
 
 ## Status
 

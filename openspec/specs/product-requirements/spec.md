@@ -16,9 +16,12 @@ mode (2-week shadow observation, pattern-mined suggestions), server
 outbound channel delivery + persistent alarm state, automated voice-call
 fallback, gateway-phone role (spare Android as SMS/call gateway),
 SIP/telephony plugin, SMS heartbeat for 2G-only connectivity,
-OwnTracks/Dawarich as secondary liveness signals, persistent-foreground
-watchface mode (YaForecasWatch2 merge), Pebble Round 2 round-layout UI,
-community onboarding flow, and Rebble appstore submission.
+OwnTracks/Dawarich as secondary liveness signals, Pebble Round 2
+round-layout UI, community onboarding flow, and Rebble appstore
+submission. (The persistent-foreground watchface mode / YaForecasWatch2
+merge was REMOVED from scope by owner decision 2026-08-18 after M0
+spike S1 measured the worker alarm path at 71 ms — see
+docs/WORKER-VS-FOREGROUND.md.)
 
 ## Requirements
 

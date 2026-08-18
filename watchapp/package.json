@@ -1,7 +1,7 @@
 {
   "name": "cryonics-monitor",
   "author": "Pebble Cryonics Monitor contributors",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "license": "GPL-3.0",
   "private": true,
   "keywords": ["pebble-app"],

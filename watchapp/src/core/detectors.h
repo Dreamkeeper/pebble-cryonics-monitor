@@ -70,8 +70,10 @@ typedef enum {
   CM_ACT_SUSPEND_STARTED,  /* .seconds = duration */
   CM_ACT_SUSPEND_EXPIRED,
   CM_ACT_AUTO_RESUMED,     /* wear signals returned early; monitoring resumed */
-  CM_ACT_LATENCY_DRILL     /* M0 S1 test tooling: synthetic launch, no ladder.
+  CM_ACT_LATENCY_DRILL,    /* M0 S1 test tooling: synthetic launch, no ladder.
                               Emitted by the worker shell, never by the core. */
+  CM_ACT_CHARGING_STARTED, /* on charger = deliberate off-wrist: implicit hold */
+  CM_ACT_CHARGING_ENDED    /* unplugged: baselines reset, monitoring resumes */
 } cm_action_type;
 
 typedef enum {
@@ -205,6 +207,9 @@ typedef struct {
   uint32_t suspend_until_ms;
   uint8_t  suspend_auto_resume;
   uint16_t suspend_motion_run_s;
+
+  /* charging hold: watch on the charger = deliberate off-wrist */
+  uint8_t  charging;
 } cm_core;
 
 void cm_config_defaults(cm_config *cfg);
@@ -220,6 +225,8 @@ void cm_user_ok(cm_core *c, uint32_t now_ms);      /* "I'm OK" / cancel / check-
 void cm_manual_sos(cm_core *c, uint32_t now_ms);
 void cm_suspend(cm_core *c, uint32_t seconds, uint8_t auto_resume, uint32_t now_ms);
 void cm_resume(cm_core *c, uint32_t now_ms);       /* manual early resume */
+void cm_set_charging(cm_core *c, int charging, uint32_t now_ms);
+                                    /* charger state = implicit suspension */
 
 /* Output: returns 1 while actions are pending */
 int cm_next_action(cm_core *c, cm_action *out);

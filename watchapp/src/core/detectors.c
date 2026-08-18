@@ -399,7 +399,7 @@ void cm_tick(cm_core *c, uint32_t now_ms, uint8_t local_hour) {
 
   tick_suspension(c);
   tick_ladder(c);
-  if (!c->suspended) {
+  if (!c->suspended && !c->charging) {
     tick_impact(c);
     tick_pulse(c);
     tick_nonmotion(c);
@@ -461,6 +461,34 @@ void cm_suspend(cm_core *c, uint32_t seconds, uint8_t auto_resume, uint32_t now_
   c->pulse_phase = 0;
   emit(c, CM_ACT_SUSPEND_STARTED, 0, 0,
        (uint16_t)(seconds > 65535u ? 65535u : seconds));
+}
+
+void cm_set_charging(cm_core *c, int charging, uint32_t now_ms) {
+  uint8_t on = charging ? 1 : 0;
+  if (on == c->charging) return;
+  c->now_ms = now_ms;
+  c->charging = on;
+  if (on) {
+    /* Putting the watch on the charger is a deliberate act: treat it as
+     * an implicit suspension. Pre-alarm stages cancel like a suspension
+     * would; a latched ALARM stays latched — charging must never clear
+     * an alarm someone may already be responding to. */
+    if (c->stage != CM_STAGE_NONE && c->stage != CM_STAGE_ALARM) {
+      cancel_alert(c, CM_CANCEL_SUSPEND);
+    }
+    c->impact_phase = 0;
+    c->pulse_phase = 0;
+    emit(c, CM_ACT_CHARGING_STARTED, 0, 0, 1);
+  } else {
+    /* fresh baselines: the stillness and pulse-absence accumulated on
+     * the charger must not fire the instant it comes off */
+    c->last_motion_ms = now_ms;
+    c->last_pulse_ms = now_ms;
+    c->impact_phase = 0;
+    c->notworn_nagged = 0;
+    c->nonmotion_armed = 1;
+    emit(c, CM_ACT_CHARGING_ENDED, 0, 0, 0);
+  }
 }
 
 void cm_resume(cm_core *c, uint32_t now_ms) {

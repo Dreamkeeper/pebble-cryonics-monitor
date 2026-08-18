@@ -566,6 +566,69 @@ static void test_removal_goes_to_nag_not_ladder(void) {
   CHECK(count_type(CM_ACT_ALARM) == 0);
 }
 
+/* On the charger = deliberate off-wrist: total silence while plugged,
+ * fresh baselines on unplug — the T4-family behavior, but automatic. */
+static void test_charging_hold(void) {
+  g_test = "charging_hold";
+  cm_config cfg = test_cfg();
+  setup(&cfg);
+  warmup();
+
+  cm_set_charging(&core, 1, now_ms);
+  drain();
+  CHECK(count_type(CM_ACT_CHARGING_STARTED) == 1);
+  log_reset();
+
+  mins_still(60); /* no pulse, no motion, on charger: nothing may fire */
+  CHECK(log_count == 0);
+
+  cm_set_charging(&core, 0, now_ms);
+  drain();
+  CHECK(count_type(CM_ACT_CHARGING_ENDED) == 1);
+  log_reset();
+
+  /* baselines reset: wearer puts the watch back on — no instant triggers
+   * (an unplugged-and-abandoned watch still earns the ladder later, by
+   * the same arrest-vs-removal rules as any other signal loss) */
+  for (int i = 0; i < 120; i++) {
+    if (i % 20 == 0) sec_still_hr(66); else sec_still();
+  }
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 0);
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 0);
+}
+
+/* Docking mid-alert behaves like a suspension: pre-alarm stages cancel,
+ * a latched ALARM survives. */
+static void test_charging_cancels_checkin_not_alarm(void) {
+  g_test = "charging_cancels_checkin_not_alarm";
+  cm_config cfg = test_cfg();
+  setup(&cfg);
+  warmup();
+
+  secs_still(62); /* pulse ladder reaches CHECKIN */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 1);
+  cm_set_charging(&core, 1, now_ms);
+  drain();
+  const cm_action *cc = find_type(CM_ACT_ALERT_CANCELLED);
+  CHECK(cc != 0);
+  CHECK(cc && cc->reason == CM_CANCEL_SUSPEND);
+  CHECK(cm_current_stage(&core) == CM_STAGE_NONE);
+
+  /* latched alarm: charging must NOT clear it */
+  cm_config cfg2 = test_cfg();
+  setup(&cfg2);
+  warmup();
+  cm_manual_sos(&core, now_ms);
+  secs_still(7); /* SOS fuse (5 s) expires -> ALARM latches */
+  CHECK(cm_current_stage(&core) == CM_STAGE_ALARM);
+  log_reset();
+  cm_set_charging(&core, 1, now_ms);
+  drain();
+  CHECK(cm_current_stage(&core) == CM_STAGE_ALARM);
+  CHECK(count_type(CM_ACT_ALERT_CANCELLED) == 0);
+}
+
 static void test_manual_sos(void) {
   g_test = "manual_sos";
   cm_config cfg = test_cfg();
@@ -622,6 +685,8 @@ int main(void) {
   test_suspension_expiry();
   test_suspension_pulse_does_not_resume();
   test_suspension_grace_blocks_instant_resume();
+  test_charging_hold();
+  test_charging_cancels_checkin_not_alarm();
   test_manual_sos();
   test_hr_unavailable_hardware();
 

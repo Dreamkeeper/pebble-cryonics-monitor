@@ -21,6 +21,7 @@ object Protocol {
     const val PMSG_DRILL = 11          // phone->watch: start S1 latency drill
     const val PMSG_DRILL_RESULT = 12   // watch->phone: SECONDS = launch ms,
                                        // HEARTBEAT_SEQ = watch arm->result ms
+    const val PMSG_CHARGING = 13       // watch->phone: SECONDS 1=on charger
 
     // Detectors (mirrors cm_detector)
     val DETECTOR_NAMES = listOf(

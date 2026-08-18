@@ -35,6 +35,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     @Volatile private var lastWatchDataT = 0L
     @Volatile private var watchBattery: Int? = null
     @Volatile private var drillT0 = 0L   // S1 latency drill start (epoch ms)
+    @Volatile private var chargingHold = false  // watch on charger = paused
     @Volatile private var watchConnected = false
     @Volatile private var faultNotified = false
     @Volatile private var serverReachable = true
@@ -155,6 +156,11 @@ class MonitorService : Service(), PebbleTransport.Listener {
                                            Build.MODEL)
                 }
             }
+            Protocol.PMSG_CHARGING -> {
+                chargingHold = ((data[PebbleTransport.KEY_SECONDS] as? Int) ?: 0) > 0
+                CmLog.i(TAG, "watch charging hold: $chargingHold")
+                updateNotification()
+            }
             Protocol.PMSG_NOTWORN -> {
                 CmLog.w(TAG, "watch reports not worn")
                 notifyFault("Watch appears OFF-WRIST (no pulse, no motion) " +
@@ -165,8 +171,17 @@ class MonitorService : Service(), PebbleTransport.Listener {
     }
 
     override fun onConnectionChanged(connected: Boolean) {
+        val was = watchConnected
         watchConnected = connected
-        if (connected) watchLink.startWatchapp()
+        if (connected && !was) {
+            // Reconnect (or reboot) self-heal: relaunch the watchapp so the
+            // worker restarts on fresh code; the stale-launch guard hands
+            // the screen back to the watchface within seconds.
+            CmLog.i(TAG, "watch reconnected — relaunching watchapp/worker")
+            watchLink.startWatchapp()
+        } else if (!connected && was) {
+            CmLog.w(TAG, "watch connection LOST")
+        }
         updateNotification()
     }
 
@@ -407,8 +422,15 @@ class MonitorService : Service(), PebbleTransport.Listener {
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_warning)
             .setOngoing(true)
+            .setContentIntent(openAppIntent())
             .build()
     }
+
+    private fun openAppIntent(): PendingIntent =
+        PendingIntent.getActivity(this, 0,
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE)
 
     private fun notifyFault(text: String) {
         val nm = getSystemService(NotificationManager::class.java)
@@ -417,6 +439,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentIntent(openAppIntent())
             .build())
     }
 
@@ -440,7 +463,11 @@ class MonitorService : Service(), PebbleTransport.Listener {
             else -> "SERVER: ${server.lastResult}"
         }
         val suspLeft = suspendedUntilT - System.currentTimeMillis()
-        val susp = if (suspLeft > 0) "SUSPENDED ${(suspLeft / 60000) + 1}m · " else ""
+        val susp = when {
+            chargingHold -> "ON CHARGER · "
+            suspLeft > 0 -> "SUSPENDED ${(suspLeft / 60000) + 1}m · "
+            else -> ""
+        }
         return "$susp$link$wb$sync · $srv"
     }
 

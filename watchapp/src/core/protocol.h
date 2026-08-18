@@ -49,7 +49,9 @@ enum {
   PMSG_SET_DEBUG = 9,     /* phone->watch: SECONDS key carries 0/1 */
   PMSG_NOTWORN = 10,      /* watch->phone: off-wrist nag (wearer-only, never contacts) */
   PMSG_DRILL = 11,        /* phone->watch: start the S1 latency drill */
-  PMSG_DRILL_RESULT = 12  /* watch->phone: SECONDS = worker-fire -> app-alive ms */
+  PMSG_DRILL_RESULT = 12, /* watch->phone: SECONDS = worker-fire -> app-alive ms */
+  PMSG_CHARGING = 13      /* watch->phone: SECONDS 1 = on charger (implicit
+                             hold), 0 = unplugged (monitoring resumed) */
 };
 
 /* S1 latency drill: the worker waits this long after the app closes before

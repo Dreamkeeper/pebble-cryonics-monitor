@@ -54,18 +54,19 @@ wearer's Recent events, tagged with the phone model:
   pure BT transport both ways.
 **Go:** < 3 s end-to-end — **met** (71 ms + sub-second transport).
 
-## S2 — Worker survival across reboot / battery death — 🟡 10-min manual run
+## S2 — Worker survival across reboot / battery death — ✅ GO (field 2026-08-18)
 **Question:** Does the background worker auto-restart after a watch reboot or
 battery die→recharge cycle? (Undocumented.)
-**Method:** With the phone notification showing `watch ✓`: reboot the
-watch (long-hold BACK, or Settings → System); after the watchface
-returns check Core app → Settings → Background App still lists Cryonics
-Monitor, open the watchapp once, confirm fresh `synced` age on the
-phone. Repeat overnight with a full battery drain → recharge.
-**Go:** auto-restarts, or companion can detect death and re-launch via app start.
-**Safety note:** the companion already detects a dead watch link
-(`watch LINK DOWN` + FAULT); opening the watchapp relaunches the worker.
-**Result:** _pending_
+**Result:** owner reboot test: Cryonics Monitor **remains the selected
+Background App after a watch reboot** — the worker slot survives. The
+"Go" criterion allowed either auto-restart or companion-driven
+relaunch; since companion ≥ v0.3.6 the phone relaunches the watchapp
+(and therefore the worker) automatically on every watch reconnect
+(reboot included), so the ladder is re-armed either way without wearer
+action. Battery-death→recharge variant: same mechanism applies on the
+post-charge reconnect; verify opportunistically during the next natural
+battery cycle. Residual dependency: the phone must be present at
+reconnect — already covered by the dead-man advisory if it is not.
 
 ## S3 — Worker vibration capability — ✅ NO (build-proven 2026-08-18)
 **Question:** Can the worker call `vibes_*` directly?

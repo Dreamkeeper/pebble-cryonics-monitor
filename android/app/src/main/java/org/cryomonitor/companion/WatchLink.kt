@@ -1,6 +1,7 @@
 package org.cryomonitor.companion
 
 import android.content.Context
+import io.rebble.pebblekit2.client.DefaultPebbleInfoRetriever
 import io.rebble.pebblekit2.client.DefaultPebbleSender
 import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
 import io.rebble.pebblekit2.common.model.TransmissionResult
@@ -32,10 +33,26 @@ class WatchLink(
     private val uuid = UUID.fromString(Protocol.WATCHAPP_UUID)
     private val classic = PebbleTransport(context, uuid, listener)
     private val pk2Sender = DefaultPebbleSender(context)
+    private val pk2Info = DefaultPebbleInfoRetriever(context)
 
     fun start() {
         classic.start()
         Pk2Bus.attach(this)
+        // Authoritative connection truth: the Core app's content provider
+        // streams the connected-watch list. Without this, a powered-off
+        // watch kept showing "watch ✓" — PK2 app-open events only ever
+        // reported *connected*, never gone (E2E field finding 2026-08-18).
+        scope.launch {
+            runCatching {
+                pk2Info.getConnectedWatches().collect { watches ->
+                    CmLog.i(TAG, "pk2: connected watches = ${watches.size}")
+                    listener.onConnectionChanged(watches.isNotEmpty())
+                }
+            }.onFailure {
+                CmLog.w(TAG, "pk2 watch-state flow unavailable ($it) — " +
+                    "connection detection degraded to classic broadcasts")
+            }
+        }
     }
 
     fun stop() {

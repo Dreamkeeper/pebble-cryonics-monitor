@@ -117,16 +117,17 @@ if we someday want a *status-mirror-only* face for wearers who keep
 monitoring interactions on the phone deliberately — worth revisiting
 after M3, not as the primary architecture.
 
-## Recommendation (unchanged from the plan, now evidence-backed)
+## Decision (owner, 2026-08-18): foreground mode REMOVED from scope
 
-Keep **worker mode as the default**; ship **foreground mode as the
-opt-in "high-assurance" profile** for wearers who accept tending the
-screen (sleep hours, high-risk periods). Close the worker's silence gap
-via S5 (DataLogging heartbeats) rather than by switching architectures:
-if S5's median flush is < 60 s, worker mode loses its only structural
-disadvantage that matters to the mission. Both modes ship in one binary
-(PK_MODE persist key already reserved), so the wearer can switch per
-situation.
+S1's measurement settled it: the worker alarm path is **71 ms** against
+a 3 s gate, so foreground mode's only structural advantage (zero launch
+latency) buys nothing a wearer could notice. Combined with the
+watchface analysis above (no variant keeps the ladder's buttons) and
+the fragility cost (one Back press ends protection), the owner removed
+persistent-foreground mode — including the YaForecasWatch2 merge — from
+scope entirely (OpenSpec change `drop-foreground-mode`). Worker mode is
+THE architecture; the silence gap is S5's job (DataLogging heartbeats).
+The PK_MODE persist key stays reserved but unused.
 
 ## Open questions feeding this report
 

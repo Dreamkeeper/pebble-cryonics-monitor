@@ -311,6 +311,18 @@ static void handle_action(const cm_action *a) {
       text_layer_set_text(s_detail_layer, HINTS_TEXT);
       send_to_phone(PMSG_SUSPENDED, a); /* SECONDS = 0 -> ended */
       break;
+    case CM_ACT_CHARGING_STARTED:
+      s_nag_hold = false; /* on the charger IS the answer to "not worn?" */
+      text_layer_set_text(s_status_layer, "Charging");
+      text_layer_set_text(s_detail_layer, "Monitoring paused\nwhile on charger");
+      send_to_phone(PMSG_CHARGING, a); /* SECONDS = 1 */
+      break;
+    case CM_ACT_CHARGING_ENDED:
+      vibes_short_pulse();
+      text_layer_set_text(s_status_layer, "Monitoring");
+      text_layer_set_text(s_detail_layer, HINTS_TEXT);
+      send_to_phone(PMSG_CHARGING, a); /* SECONDS = 0 */
+      break;
     default: break;
   }
 }
@@ -334,12 +346,14 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
     persist_delete(PK_PENDING_ACTION); /* we got it live */
     handle_action(&a);
   } else if (type == WMSG_STATUS) {
+    uint16_t stage = m->data0 & 0xFFu;      /* high byte = charging hold */
+    uint8_t charging = (uint8_t)(m->data0 >> 8);
     if (s_debug) {
       /* M0 spike telemetry from the worker (S4 + S8): raw bpm low byte,
        * free worker heap in 64 B units high byte. */
       snprintf(s_detail_buf, sizeof(s_detail_buf),
                "st%u susp%um DBG\nbpm %u · heap %uB",
-               (unsigned)m->data0, (unsigned)m->data2,
+               (unsigned)stage, (unsigned)m->data2,
                (unsigned)(m->data1 & 0xFF),
                (unsigned)((m->data1 >> 8) * 64u));
       text_layer_set_text(s_detail_layer, s_detail_buf);
@@ -352,7 +366,9 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
         snprintf(s_status_buf, sizeof(s_status_buf), "Suspended %u min",
                  (unsigned)m->data2);
         text_layer_set_text(s_status_layer, s_status_buf);
-      } else if (m->data0 == (uint16_t)CM_STAGE_NONE) {
+      } else if (charging) {
+        text_layer_set_text(s_status_layer, "Charging");
+      } else if (stage == (uint16_t)CM_STAGE_NONE) {
         text_layer_set_text(s_status_layer, "Monitoring");
       }
     }
@@ -362,7 +378,7 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
      * on top of their watchface — hand the screen back. A nag launch is
      * NOT stale: it deliberately has no ladder stage. */
     if (s_launched_by_worker && !s_nag_hold && s_drill_hold_ticks == 0 &&
-        m->data0 == (uint16_t)CM_STAGE_NONE && m->data2 == 0) {
+        stage == (uint16_t)CM_STAGE_NONE && m->data2 == 0 && !charging) {
       DLOG("stale worker launch: no active stage, returning to watchface");
       vibes_cancel();
       if (s_alert_window) window_stack_remove(s_alert_window, true);

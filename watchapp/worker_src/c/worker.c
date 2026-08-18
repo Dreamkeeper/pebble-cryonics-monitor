@@ -67,12 +67,14 @@ static uint32_t now_ms(void) {
 
 static void push_status_to_app(void) {
   /* Minutes round UP: a fresh 30-min suspension reads "30", not "29".
-   * data1 packs the M0 spike telemetry (S4 raw HR, S8 heap headroom):
-   * low byte = last raw bpm (capped 255), high byte = free heap / 64 B. */
+   * data0: stage low byte, charging-hold flag high byte. data1 packs the
+   * M0 spike telemetry (S4 raw HR, S8 heap headroom): low byte = last
+   * raw bpm (capped 255), high byte = free heap / 64 B. */
   uint32_t heap = heap_bytes_free();
   if (heap > 255u * 64u) heap = 255u * 64u;
   AppWorkerMessage m = {
-    .data0 = (uint16_t)cm_current_stage(&s_core),
+    .data0 = (uint16_t)(cm_current_stage(&s_core) |
+                        ((uint16_t)s_core.charging << 8)),
     .data1 = (uint16_t)((s_last_bpm > 255 ? 255 : s_last_bpm) |
                         ((heap / 64u) << 8)),
     .data2 = (uint16_t)((cm_suspend_remaining_s(&s_core, now_ms()) + 59u) / 60u),
@@ -194,6 +196,13 @@ static void health_handler(HealthEventType event, void *context) {
 }
 #endif
 
+/* On the charger = deliberately off-wrist: implicit suspension. The core
+ * silences detectors while plugged and resets baselines on unplug. */
+static void battery_handler(BatteryChargeState state) {
+  cm_set_charging(&s_core, state.is_plugged, now_ms());
+  drain_actions();
+}
+
 static void log_heartbeat(void) {
   cm_heartbeat_rec rec = {
     .epoch_s = (uint32_t)time(NULL),
@@ -307,6 +316,9 @@ static void init(void) {
   accel_service_set_sampling_rate(ACCEL_SAMPLING_25HZ);
   accel_data_service_subscribe(25, accel_handler); /* one callback per second */
 
+  battery_state_service_subscribe(battery_handler);
+  battery_handler(battery_state_service_peek()); /* seed: may boot on charger */
+
 #if defined(PBL_HEALTH)
   if (cfg.hr_available) {
     health_service_events_subscribe(health_handler, NULL); /* costs ~2 kB heap */
@@ -330,6 +342,7 @@ static void deinit(void) {
   set_hr_burst(false); /* never leave the HRM in burst mode */
   health_service_events_unsubscribe();
 #endif
+  battery_state_service_unsubscribe();
   accel_data_service_unsubscribe();
 }
 

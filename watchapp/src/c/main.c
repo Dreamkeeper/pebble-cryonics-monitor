@@ -15,6 +15,12 @@ static uint8_t s_debug;
  * opening the app. Such a launch must return the watch to the watchface
  * as soon as the alert is over. */
 static bool s_launched_by_worker;
+/* Any launch the wearer did not perform themselves (worker alert OR a
+ * phone-side relaunch: reconnect self-heal, worker re-arm, service
+ * restart). Such a screen must hand itself back to the watchface as
+ * soon as nothing needs the wearer — the field bug was phone-launched
+ * apps bypassing the stale-launch guard and squatting forever. */
+static bool s_auto_launched;
 #define DLOG(...) do { \
     if (s_debug) APP_LOG(APP_LOG_LEVEL_DEBUG, __VA_ARGS__); \
   } while (0)
@@ -232,7 +238,7 @@ static void show_alert(const cm_action *a) {
     vibes_cancel();
     if (s_alert_window) window_stack_remove(s_alert_window, true);
     /* Nothing left to show: hand the screen back to the watchface. */
-    if (s_launched_by_worker) window_stack_pop_all(false);
+    if (s_auto_launched) window_stack_pop_all(false);
     return;
   }
   if (!s_alert_window) {
@@ -372,13 +378,14 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
         text_layer_set_text(s_status_layer, "Monitoring");
       }
     }
-    /* Stale-launch guard: the worker launched us for an alert that has
-     * since ended (e.g. motion cancelled it during the launch gap). A
-     * bare "Monitoring" screen the wearer never asked for must not sit
-     * on top of their watchface — hand the screen back. A nag launch is
-     * NOT stale: it deliberately has no ladder stage. */
-    if (s_launched_by_worker && !s_nag_hold && s_drill_hold_ticks == 0 &&
-        stage == (uint16_t)CM_STAGE_NONE && m->data2 == 0 && !charging) {
+    /* Auto-launch guard: this screen was opened by the worker or the
+     * phone, not the wearer. Once no ladder stage needs attention, hand
+     * the screen back to the watchface — suspension and charging are
+     * ambient states (visible on the phone) and do not justify keeping
+     * a screen the wearer never asked for. A nag launch is NOT stale:
+     * it deliberately has no ladder stage. */
+    if (s_auto_launched && !s_nag_hold && s_drill_hold_ticks == 0 &&
+        stage == (uint16_t)CM_STAGE_NONE) {
       DLOG("stale worker launch: no active stage, returning to watchface");
       vibes_cancel();
       if (s_alert_window) window_stack_remove(s_alert_window, true);
@@ -515,8 +522,16 @@ static void init(void) {
   tick_timer_service_subscribe(SECOND_UNIT, app_tick);
   ensure_worker_running();
 
-  /* Launched by the worker? Pick up the parked action immediately. */
+  /* Launched by the worker? Pick up the parked action immediately.
+   * Phone launches (reconnect self-heal, worker re-arm) count as
+   * auto-launches too: they exist to restart the worker, not to show
+   * a screen — the guard returns to the watchface once status shows
+   * nothing needs the wearer. */
   s_launched_by_worker = (launch_reason() == APP_LAUNCH_WORKER);
+  s_auto_launched = s_launched_by_worker ||
+                    launch_reason() == APP_LAUNCH_PHONE;
+  APP_LOG(APP_LOG_LEVEL_INFO, "launch reason=%d auto=%d",
+          (int)launch_reason(), (int)s_auto_launched);
   if (s_launched_by_worker) {
     pickup_pending_action();
   }

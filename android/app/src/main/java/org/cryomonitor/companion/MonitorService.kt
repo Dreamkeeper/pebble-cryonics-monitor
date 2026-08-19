@@ -37,6 +37,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     @Volatile private var drillT0 = 0L   // S1 latency drill start (epoch ms)
     @Volatile private var chargingHold = false  // watch on charger = paused
     @Volatile private var workerLastRecT = 0L   // last DataLogging record (arrival)
+    @Volatile private var lastSelfHealT = 0L    // throttle watchapp relaunches
     @Volatile private var workerFaultNotified = false
     private val dlFlushLatencies = ArrayDeque<Long>() // S5 stats, last 30
     @Volatile private var watchConnected = false
@@ -59,7 +60,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
 
         watchLink = WatchLink(context = this, scope = scope, listener = this)
         watchLink.start()
-        watchLink.startWatchapp() // also relaunches the background worker
+        selfHealLaunch("service start") // also relaunches the background worker
 
         scope.launch { watchdogLoop() }
         scope.launch { serverHeartbeatLoop() }
@@ -186,14 +187,30 @@ class MonitorService : Service(), PebbleTransport.Listener {
         watchConnected = connected
         if (connected && !was) {
             // Reconnect (or reboot) self-heal: relaunch the watchapp so the
-            // worker restarts on fresh code; the stale-launch guard hands
+            // worker restarts on fresh code; the auto-launch guard hands
             // the screen back to the watchface within seconds.
-            CmLog.i(TAG, "watch reconnected — relaunching watchapp/worker")
-            watchLink.startWatchapp()
+            selfHealLaunch("watch reconnected")
         } else if (!connected && was) {
             CmLog.w(TAG, "watch connection LOST")
         }
         updateNotification()
+    }
+
+    /**
+     * Relaunch the watchapp to (re)start the worker — throttled, because
+     * every launch briefly takes the watch screen. A flapping BT link or
+     * repeated service restarts must not strobe the wearer's watchface
+     * (field finding: the app "popping up by itself").
+     */
+    private fun selfHealLaunch(reason: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastSelfHealT < SELF_HEAL_MIN_INTERVAL_MS) {
+            CmLog.d(TAG, "self-heal ($reason) suppressed: throttled")
+            return
+        }
+        lastSelfHealT = now
+        CmLog.i(TAG, "self-heal ($reason): relaunching watchapp/worker")
+        watchLink.startWatchapp()
     }
 
     private fun detectorName(data: Map<Int, Any>): String {
@@ -306,7 +323,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 notifyFault("Watch link lost — check Bluetooth and the " +
                     "watch battery. Monitoring on the watch continues, but " +
                     "alarms cannot reach this phone until the link returns.")
-                watchLink.startWatchapp() // best-effort self-heal on reconnect
+                selfHealLaunch("link down") // best-effort, lands on reconnect
             }
             // Worker-eviction watchdog: only armed once records have ever
             // arrived (so it stays quiet until S5 proves the channel).
@@ -319,7 +336,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 notifyFault("The watch background worker stopped reporting " +
                     "(possibly evicted by another background app). " +
                     "Relaunching the watchapp to restore monitoring.")
-                watchLink.startWatchapp() // relaunching the app re-arms the worker
+                selfHealLaunch("worker silent") // relaunch re-arms the worker
             }
             // Ask the phone's Pebble app to flush buffered worker records
             // once a minute (every 4th 15 s tick).
@@ -556,5 +573,6 @@ class MonitorService : Service(), PebbleTransport.Listener {
         const val ACTION_HEARTBEAT_NOW = "org.cryomonitor.HEARTBEAT_NOW"
         const val ACTION_LATENCY_DRILL = "org.cryomonitor.LATENCY_DRILL"
         const val ACTION_WORKER_HEARTBEAT = "org.cryomonitor.WORKER_HEARTBEAT"
+        private const val SELF_HEAL_MIN_INTERVAL_MS = 60_000L
     }
 }

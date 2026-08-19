@@ -356,7 +356,9 @@ class MonitorService : Service(), PebbleTransport.Listener {
     }
 
     private suspend fun serverHeartbeatLoop() {
+        var failures = 0
         while (true) {
+            var delayMs = 300_000L
             if (server.configured) {
                 val bm = getSystemService(BatteryManager::class.java)
                 val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
@@ -364,21 +366,36 @@ class MonitorService : Service(), PebbleTransport.Listener {
                           else ((System.currentTimeMillis() - lastWatchDataT) / 1000).toInt()
                 val ack = server.heartbeat(pct, watchBattery, age,
                                            lowBatteryWarning = pct in 1..15)
-                val ok = ack != null
-                CmLog.d(TAG, "server heartbeat ok=$ok phoneBatt=$pct watchAge=$age " +
-                    "degraded=${ack?.degraded}")
-                if (ack != null) onDegradedState(ack.degraded)
-                if (ack?.command == "latency_drill") runLatencyDrill()
-                if (!ok && serverReachable) {
-                    serverReachable = false
-                    CmLog.w(TAG, "server unreachable")
-                    notifyFault("Server unreachable — phone-direct escalation active.")
-                } else if (ok && !serverReachable) {
-                    serverReachable = true
-                    CmLog.i(TAG, "server reachable again")
+                CmLog.d(TAG, "server heartbeat ok=${ack != null} phoneBatt=$pct " +
+                    "watchAge=$age degraded=${ack?.degraded}")
+                if (ack != null) {
+                    failures = 0
+                    if (!serverReachable) {
+                        serverReachable = true
+                        CmLog.i(TAG, "server reachable again")
+                        updateNotification()
+                    }
+                    onDegradedState(ack.degraded)
+                    if (ack.command == "latency_drill") runLatencyDrill()
+                } else {
+                    // One miss is usually a transient (cell handover, Doze
+                    // exit, DNS blip): retry in a minute BEFORE declaring
+                    // the server down — a single InterruptedIOException
+                    // must not contradict a perfectly reachable server in
+                    // the notification for the next five minutes.
+                    failures++
+                    delayMs = 60_000L
+                    CmLog.w(TAG, "server heartbeat failed x$failures " +
+                        "(${server.lastResult})")
+                    if (failures >= 2 && serverReachable) {
+                        serverReachable = false
+                        notifyFault("Server unreachable — phone-direct " +
+                            "escalation active.")
+                        updateNotification()
+                    }
                 }
             }
-            delay(300_000)
+            delay(delayMs)
         }
     }
 

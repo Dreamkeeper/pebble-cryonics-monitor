@@ -25,6 +25,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settings: SettingsStore
     private lateinit var degradedBanner: TextView
     private lateinit var connState: TextView
+    private lateinit var resolveBtn: Button
+    @Volatile private var activeEscalationIds: List<String> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,6 +61,32 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, Ui.dp(context, 8), 0, Ui.dp(context, 16))
         }
         col.addView(connState)
+
+        // Visible only while escalations are active: one tap declares
+        // "I'm OK" for all of them — same semantics as resolving each as
+        // a false alarm from the dashboard, recorded in the audit log.
+        resolveBtn = Button(this).apply {
+            visibility = android.view.View.GONE
+            setBackgroundColor(Ui.errorContainer(this))
+            setTextColor(Ui.onErrorContainer(this))
+            setOnClickListener {
+                val ids = activeEscalationIds
+                if (ids.isEmpty()) return@setOnClickListener
+                thread {
+                    val client = ServerClient(settings)
+                    val okAll = ids.map { client.resolve(it, "false_alarm") }
+                        .all { it }
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity,
+                            if (okAll) "Escalation(s) resolved as false alarm"
+                            else "Some resolves failed — check the dashboard",
+                            Toast.LENGTH_LONG).show()
+                        refreshStatus()
+                    }
+                }
+            }
+        }
+        col.addView(resolveBtn)
 
         fun header(t: String) = col.addView(TextView(this).apply {
             text = t
@@ -215,6 +243,11 @@ class MainActivity : AppCompatActivity() {
                 connState.text = "Server connected · phone state '${s.phone}'" +
                     if (s.activeEscalations > 0)
                         " · ${s.activeEscalations} ACTIVE ESCALATION(S)" else ""
+                activeEscalationIds = s.escalationIds
+                resolveBtn.text =
+                    "I'M OK — resolve ${s.activeEscalations} escalation(s)"
+                resolveBtn.visibility = if (s.activeEscalations > 0)
+                    android.view.View.VISIBLE else android.view.View.GONE
             }
         }
     }

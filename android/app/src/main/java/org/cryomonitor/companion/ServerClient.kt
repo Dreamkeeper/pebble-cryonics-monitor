@@ -140,15 +140,18 @@ class ServerClient(
         }, method = "PUT")
 
     data class WearerStatus(val phone: String, val degraded: Boolean,
-                            val activeEscalations: Int)
+                            val activeEscalations: Int,
+                            val escalationIds: List<String>)
 
     fun fetchStatus(): WearerStatus? {
         val resp = call("GET", "/api/v1/status") ?: return null
+        val esc = resp.optJSONObject("active_escalations")
+        val ids = esc?.keys()?.asSequence()?.toList() ?: emptyList()
         return WearerStatus(
             phone = resp.optString("phone"),
             degraded = resp.optBoolean("degraded"),
-            activeEscalations = resp.optJSONObject("active_escalations")
-                ?.length() ?: 0)
+            activeEscalations = ids.size,
+            escalationIds = ids)
     }
 
     // ---- monitoring-path calls (unchanged behavior) ----

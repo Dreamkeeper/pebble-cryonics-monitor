@@ -45,3 +45,8 @@ watchapp/tests/*.obj
 !dist/*.apk
 watchapp/.lock-waf*
 tokens.txt
+
+# Release signing — never commit
+*.jks
+*.keystore
+android/keystore.properties

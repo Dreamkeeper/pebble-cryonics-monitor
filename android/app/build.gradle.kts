@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     // AGP >= 8.9.1 + compileSdk 36: required by PebbleKit2's androidx deps.
     // Kotlin >= 2.3: PebbleKit2 1.2.0 ships Kotlin 2.3 metadata.
@@ -17,9 +19,32 @@ android {
         versionName = "0.3.10"
     }
 
+    // Release signing: keystore + credentials live OUTSIDE version control
+    // (android/keystore.properties, android/keystore/*.jks — git-ignored).
+    // A stable, non-debug signature is what keeps Play Protect from
+    // flagging sideloaded builds as harmful (debug-signed + SEND_SMS is
+    // its classic heuristic trip) and enables in-place updates.
+    val keystoreProps = Properties().apply {
+        val f = rootProject.file("keystore.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    signingConfigs {
+        if (keystoreProps.isNotEmpty()) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps["storeFile"] as String)
+                storePassword = keystoreProps["storePassword"] as String
+                keyAlias = keystoreProps["keyAlias"] as String
+                keyPassword = keystoreProps["keyPassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (keystoreProps.isNotEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

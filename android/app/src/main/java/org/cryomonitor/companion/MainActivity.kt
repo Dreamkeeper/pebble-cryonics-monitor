@@ -169,6 +169,10 @@ class MainActivity : AppCompatActivity() {
         val fEmg = advField("112 / 911", settings.emergencyNumber)
         advLabel("Wearer name (used in alert texts)")
         val fName = advField("name", settings.wearerName)
+        advLabel("Watch sync interval, minutes (0 = off). The watchapp " +
+            "briefly opens to refresh liveness + battery when data is " +
+            "older than this.")
+        val fSync = advField("60", settings.watchSyncIntervalMin.toString())
 
         advanced.addView(Button(this).apply {
             text = "Save"
@@ -183,6 +187,8 @@ class MainActivity : AppCompatActivity() {
                 settings.emergencyNumber = fEmg.text.toString().trim()
                     .ifEmpty { "112" }
                 settings.wearerName = fName.text.toString().trim()
+                settings.watchSyncIntervalMin =
+                    fSync.text.toString().trim().toIntOrNull() ?: 60
                 startService(Intent(this@MainActivity, MonitorService::class.java)
                     .setAction(MonitorService.ACTION_HEARTBEAT_NOW))
                 Toast.makeText(this@MainActivity,

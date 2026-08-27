@@ -43,4 +43,15 @@ class SettingsStore(context: Context) {
     var debugLogging: Boolean
         get() = p.getBoolean("debug_logging", false)
         set(v) = p.edit().putBoolean("debug_logging", v).apply()
+
+    /**
+     * S5 fallback (owner decision 2026-08-27): the worker cannot reach the
+     * phone while the watchapp is closed (no AppMessage; DataLogging dead
+     * in the current phone stack), so the companion may periodically
+     * launch the watchapp for a brief sync — screen flashes for a few
+     * seconds, watch data age + battery refresh. Minutes; 0 = off.
+     */
+    var watchSyncIntervalMin: Int
+        get() = p.getInt("watch_sync_interval_min", 60)
+        set(v) = p.edit().putInt("watch_sync_interval_min", v.coerceIn(0, 1440)).apply()
 }

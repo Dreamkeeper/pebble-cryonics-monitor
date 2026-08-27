@@ -24,5 +24,7 @@
 ## 3. Wrap-up
 
 - [x] 3.1 dist refresh (.pbw + .apk), commit
-- [ ] 3.2 Owner visual pass on phone + watch (E2E-TEST.md T1-T3 double
-      as the regression run), then archive
+- [x] 3.2 Owner verdict (2026-08-27): M3 baseline accepted as interim
+      ("far from the final form, but should not be the main focus for
+      now") after two weeks of daily field use. Deeper UI work is
+      deferred past M0/M1 and will arrive as its own change.

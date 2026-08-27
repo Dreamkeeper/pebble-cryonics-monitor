@@ -370,6 +370,16 @@ class MonitorService : Service(), PebbleTransport.Listener {
             // Ask the phone's Pebble app to flush buffered worker records
             // once a minute (every 4th 15 s tick).
             if (flushTick++ % 4 == 0) DataLogReceiver.requestFlush(this)
+            // S5 fallback (user-configurable): when watch data is older
+            // than the sync interval and the link is up, launch the
+            // watchapp briefly — it heartbeats fresh state and the
+            // auto-launch guard returns the watchface in seconds.
+            val syncMs = settings.watchSyncIntervalMin * 60_000L
+            if (syncMs > 0 && watchConnected && lastWatchDataT > 0 &&
+                System.currentTimeMillis() - lastWatchDataT > syncMs) {
+                selfHealLaunch("periodic sync " +
+                    "(${settings.watchSyncIntervalMin}m interval)")
+            }
             updateNotification()
             delay(15_000) // also re-posts the notification (OSD pattern)
         }

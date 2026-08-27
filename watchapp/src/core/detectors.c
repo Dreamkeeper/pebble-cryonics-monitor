@@ -399,7 +399,7 @@ void cm_tick(cm_core *c, uint32_t now_ms, uint8_t local_hour) {
 
   tick_suspension(c);
   tick_ladder(c);
-  if (!c->suspended && !c->charging) {
+  if (!c->suspended && !c->charging && !c->lab_hold) {
     tick_impact(c);
     tick_pulse(c);
     tick_nonmotion(c);
@@ -488,6 +488,30 @@ void cm_set_charging(cm_core *c, int charging, uint32_t now_ms) {
     c->notworn_nagged = 0;
     c->nonmotion_armed = 1;
     emit(c, CM_ACT_CHARGING_ENDED, 0, 0, 0);
+  }
+}
+
+/* Guided sensor test (M0 S4): the wearer will deliberately loosen the
+ * strap and put the watch on a table — the detectors must sit this out.
+ * Same rules as the charging hold, but silent: the lab UI on the phone
+ * is already narrating, and no state change should reach contacts. */
+void cm_set_lab_hold(cm_core *c, int hold, uint32_t now_ms) {
+  uint8_t on = hold ? 1 : 0;
+  if (on == c->lab_hold) return;
+  c->now_ms = now_ms;
+  c->lab_hold = on;
+  if (on) {
+    if (c->stage != CM_STAGE_NONE && c->stage != CM_STAGE_ALARM) {
+      cancel_alert(c, CM_CANCEL_SUSPEND);
+    }
+    c->impact_phase = 0;
+    c->pulse_phase = 0;
+  } else {
+    c->last_motion_ms = now_ms;
+    c->last_pulse_ms = now_ms;
+    c->impact_phase = 0;
+    c->notworn_nagged = 0;
+    c->nonmotion_armed = 1;
   }
 }
 

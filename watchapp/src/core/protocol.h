@@ -31,9 +31,14 @@ enum {
   WMSG_STATUS_REQ = 6,    /* app->worker: request status push */
   WMSG_STATUS = 7,        /* worker->app: data0=stage, data1=last_bpm, data2=suspend_remaining_min */
   WMSG_SET_DEBUG = 8,     /* app->worker: data0 = 0/1 */
-  WMSG_DRILL = 9          /* app->worker: run the S1 latency drill — wait
+  WMSG_DRILL = 9,         /* app->worker: run the S1 latency drill — wait
                              CM_DRILL_DELAY_S, then fire a synthetic
                              worker_launch_app() alert */
+  WMSG_HR_LAB = 10,       /* app->worker: data0 = 1/0 — S4 sensor lab:
+                             burst HR sampling + silent detector hold */
+  WMSG_HR_SAMPLE = 11     /* worker->app (lab only, every 2 s):
+                             data0 = raw peek bpm, data1 = free heap / 64 B,
+                             data2 = seconds since last HR event */
 };
 
 /* MSG_TYPE values for AppMessage to/from the phone. */
@@ -50,8 +55,12 @@ enum {
   PMSG_NOTWORN = 10,      /* watch->phone: off-wrist nag (wearer-only, never contacts) */
   PMSG_DRILL = 11,        /* phone->watch: start the S1 latency drill */
   PMSG_DRILL_RESULT = 12, /* watch->phone: SECONDS = worker-fire -> app-alive ms */
-  PMSG_CHARGING = 13      /* watch->phone: SECONDS 1 = on charger (implicit
+  PMSG_CHARGING = 13,     /* watch->phone: SECONDS 1 = on charger (implicit
                              hold), 0 = unplugged (monitoring resumed) */
+  PMSG_HR_LAB = 14,       /* phone->watch: SECONDS 1/0 — start/stop the S4
+                             sensor lab (forwarded to the worker) */
+  PMSG_HR_SAMPLE = 15     /* watch->phone: SECONDS = raw bpm, HEARTBEAT_SEQ =
+                             seconds since last HR event, DETECTOR = heap/64 */
 };
 
 /* S1 latency drill: the worker waits this long after the app closes before

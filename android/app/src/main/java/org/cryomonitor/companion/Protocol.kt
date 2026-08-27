@@ -22,6 +22,9 @@ object Protocol {
     const val PMSG_DRILL_RESULT = 12   // watch->phone: SECONDS = launch ms,
                                        // HEARTBEAT_SEQ = watch arm->result ms
     const val PMSG_CHARGING = 13       // watch->phone: SECONDS 1=on charger
+    const val PMSG_HR_LAB = 14         // phone->watch: SECONDS 1/0 lab on/off
+    const val PMSG_HR_SAMPLE = 15      // watch->phone: SECONDS=bpm,
+                                       // HEARTBEAT_SEQ=event age s, DETECTOR=heap/64
 
     // Detectors (mirrors cm_detector)
     val DETECTOR_NAMES = listOf(

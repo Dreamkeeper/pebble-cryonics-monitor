@@ -48,6 +48,8 @@ static uint16_t s_alert_seconds_left;
 /* S1 latency drill: keep the app alive a few seconds after sending the
  * result so the outbox flushes before the stale-launch guard pops us. */
 static uint8_t s_drill_hold_ticks;
+/* S4 sensor lab: the app must stay open to relay worker HR samples. */
+static bool s_lab_hold;
 
 static uint32_t app_now_ms(void) {
   time_t s; uint16_t ms;
@@ -102,6 +104,24 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
     case PMSG_USER_OK_REMOTE: {
       AppWorkerMessage m = {0};
       app_worker_send_message(WMSG_USER_OK, &m);
+      break;
+    }
+    case PMSG_HR_LAB: {
+      Tuple *v = dict_find(iter, MESSAGE_KEY_SECONDS);
+      bool on = v && v->value->uint16;
+      s_lab_hold = on;
+      AppWorkerMessage m = {.data0 = on ? 1 : 0};
+      app_worker_send_message(WMSG_HR_LAB, &m);
+      if (on) {
+        text_layer_set_text(s_status_layer, "Sensor lab");
+        text_layer_set_text(s_detail_layer,
+                            "Follow the phone's\ninstructions");
+      } else {
+        text_layer_set_text(s_status_layer, "Monitoring");
+        text_layer_set_text(s_detail_layer, HINTS_TEXT);
+        /* auto-launch guard takes the screen back on the next poll */
+      }
+      APP_LOG(APP_LOG_LEVEL_INFO, "sensor lab %s", on ? "ON" : "off");
       break;
     }
     case PMSG_DRILL: {
@@ -351,10 +371,26 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
                    .seconds = m->data2};
     persist_delete(PK_PENDING_ACTION); /* we got it live */
     handle_action(&a);
+  } else if (type == WMSG_HR_SAMPLE) {
+    /* Relay the lab sample to the phone and mirror it on the watch. */
+    DictionaryIterator *out;
+    if (app_message_outbox_begin(&out) == APP_MSG_OK) {
+      dict_write_uint8(out, MESSAGE_KEY_MSG_TYPE, PMSG_HR_SAMPLE);
+      dict_write_uint16(out, MESSAGE_KEY_SECONDS, m->data0);
+      dict_write_uint16(out, MESSAGE_KEY_HEARTBEAT_SEQ, m->data2);
+      dict_write_uint8(out, MESSAGE_KEY_DETECTOR, (uint8_t)m->data1);
+      app_message_outbox_send();
+    }
+    if (s_lab_hold) {
+      snprintf(s_detail_buf, sizeof(s_detail_buf),
+               "bpm %u · age %us\nheap %uB", (unsigned)m->data0,
+               (unsigned)m->data2, (unsigned)(m->data1 * 64u));
+      text_layer_set_text(s_detail_layer, s_detail_buf);
+    }
   } else if (type == WMSG_STATUS) {
     uint16_t stage = m->data0 & 0xFFu;      /* high byte = charging hold */
     uint8_t charging = (uint8_t)(m->data0 >> 8);
-    if (s_debug) {
+    if (s_debug && !s_lab_hold) {
       /* M0 spike telemetry from the worker (S4 + S8): raw bpm low byte,
        * free worker heap in 64 B units high byte. */
       snprintf(s_detail_buf, sizeof(s_detail_buf),
@@ -367,7 +403,7 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
     /* Keep the big status line truthful: the worker owns the state, the
      * app just displays it (a stale "Suspended 30 min" after auto-resume
      * was exactly the failure mode this prevents). */
-    if (!s_nag_hold) {
+    if (!s_nag_hold && !s_lab_hold) {
       if (m->data2 > 0) {
         snprintf(s_status_buf, sizeof(s_status_buf), "Suspended %u min",
                  (unsigned)m->data2);
@@ -384,8 +420,8 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
      * ambient states (visible on the phone) and do not justify keeping
      * a screen the wearer never asked for. A nag launch is NOT stale:
      * it deliberately has no ladder stage. */
-    if (s_auto_launched && !s_nag_hold && s_drill_hold_ticks == 0 &&
-        stage == (uint16_t)CM_STAGE_NONE) {
+    if (s_auto_launched && !s_nag_hold && !s_lab_hold &&
+        s_drill_hold_ticks == 0 && stage == (uint16_t)CM_STAGE_NONE) {
       DLOG("stale worker launch: no active stage, returning to watchface");
       vibes_cancel();
       if (s_alert_window) window_stack_remove(s_alert_window, true);

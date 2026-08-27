@@ -103,7 +103,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     override fun onAppMessage(data: Map<Int, Any>) {
         lastWatchDataT = System.currentTimeMillis()
         faultNotified = false
-        (data[PebbleTransport.KEY_WATCH_BATTERY] as? Int)?.let { watchBattery = it }
+        (data[PebbleTransport.KEY_WATCH_BATTERY] as? Int)?.let { noteWatchBattery(it) }
 
         when (data[PebbleTransport.KEY_MSG_TYPE] as? Int) {
             Protocol.PMSG_HEARTBEAT -> {
@@ -167,6 +167,16 @@ class MonitorService : Service(), PebbleTransport.Listener {
                         server.drillResult(launchMs, rtt, watchMs, transport,
                                            Build.MODEL)
                 }
+            }
+            Protocol.PMSG_HR_SAMPLE -> {
+                // S4 sensor lab sample: relay to the DebugActivity.
+                sendBroadcast(Intent(ACTION_HR_SAMPLE)
+                    .setPackage(packageName)
+                    .putExtra("bpm", (data[PebbleTransport.KEY_SECONDS] as? Int) ?: 0)
+                    .putExtra("event_age_s",
+                        (data[PebbleTransport.KEY_HEARTBEAT_SEQ] as? Int) ?: -1)
+                    .putExtra("heap",
+                        ((data[PebbleTransport.KEY_DETECTOR] as? Int) ?: 0) * 64))
             }
             Protocol.PMSG_CHARGING -> {
                 chargingHold = ((data[PebbleTransport.KEY_SECONDS] as? Int) ?: 0) > 0
@@ -346,6 +356,24 @@ class MonitorService : Service(), PebbleTransport.Listener {
         }
     }
 
+    /**
+     * S6 battery-drain history: append a "epoch:pct" point whenever the
+     * reported watch battery CHANGES (Pebble reports in 10 % steps, so
+     * this stays tiny). The debug screen derives %/hour and projected
+     * days from it — the phone-local complement of the server trail.
+     */
+    private fun noteWatchBattery(pct: Int) {
+        if (pct == watchBattery) return
+        watchBattery = pct
+        runCatching {
+            val prefs = getSharedPreferences("batt_hist", MODE_PRIVATE)
+            val hist = (prefs.getString("points", "") ?: "")
+                .split(';').filter { it.isNotEmpty() }
+                .takeLast(199) + "${System.currentTimeMillis() / 1000}:$pct"
+            prefs.edit().putString("points", hist.joinToString(";")).apply()
+        }
+    }
+
     private fun humanAge(ms: Long): String {
         val s = ms / 1000
         return when {
@@ -426,6 +454,16 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 updateNotification()
             }
             ACTION_LATENCY_DRILL -> runLatencyDrill()
+            ACTION_HR_LAB -> {
+                val on = intent.getBooleanExtra("on", false)
+                CmLog.i(TAG, "S4 sensor lab ${if (on) "START" else "STOP"}")
+                scope.launch {
+                    if (on) { watchLink.startWatchapp(); delay(3_000) }
+                    watchLink.send(mapOf(
+                        PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_HR_LAB,
+                        PebbleTransport.KEY_SECONDS to (if (on) 1 else 0)))
+                }
+            }
             ACTION_WORKER_HEARTBEAT -> {
                 // The background worker's DataLogging record made it over —
                 // this is watch liveness WITHOUT the watchapp being open
@@ -434,13 +472,16 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 workerLastRecT = System.currentTimeMillis()
                 lastWatchDataT = workerLastRecT
                 intent.getIntExtra("battery", -1)
-                    .takeIf { it in 0..100 }?.let { watchBattery = it }
+                    .takeIf { it in 0..100 }?.let { noteWatchBattery(it) }
                 val flushS = intent.getLongExtra("flush_s", -1)
                 if (flushS >= 0) {
                     synchronized(dlFlushLatencies) {
                         dlFlushLatencies.addLast(flushS)
                         while (dlFlushLatencies.size > 30) dlFlushLatencies.removeFirst()
                         val median = dlFlushLatencies.sorted()[dlFlushLatencies.size / 2]
+                        s5RecordCount++
+                        s5MedianFlushS = median
+                        s5LastRecT = workerLastRecT
                         CmLog.i(TAG, "S5: worker record flush=${flushS}s " +
                             "median=${median}s over ${dlFlushLatencies.size}")
                     }
@@ -590,6 +631,13 @@ class MonitorService : Service(), PebbleTransport.Listener {
         const val ACTION_HEARTBEAT_NOW = "org.cryomonitor.HEARTBEAT_NOW"
         const val ACTION_LATENCY_DRILL = "org.cryomonitor.LATENCY_DRILL"
         const val ACTION_WORKER_HEARTBEAT = "org.cryomonitor.WORKER_HEARTBEAT"
+        const val ACTION_HR_LAB = "org.cryomonitor.HR_LAB"
+        const val ACTION_HR_SAMPLE = "org.cryomonitor.HR_SAMPLE"
         private const val SELF_HEAL_MIN_INTERVAL_MS = 60_000L
+
+        // S5 live stats, read by the debug screen.
+        @Volatile var s5RecordCount = 0
+        @Volatile var s5MedianFlushS = -1L
+        @Volatile var s5LastRecT = 0L
     }
 }

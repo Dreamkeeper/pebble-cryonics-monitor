@@ -13,7 +13,6 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import org.cryomonitor.companion.Ui.caption
@@ -125,32 +124,10 @@ class MainActivity : AppCompatActivity() {
         })
 
         header("Diagnostics")
-        @Suppress("UseSwitchCompatOrMaterialCode")
-        col.addView(Switch(this).apply {
-            text = "Debug mode (extensive logs, phone + watch)"
-            isChecked = settings.debugLogging
-            setOnCheckedChangeListener { _, on ->
-                settings.debugLogging = on
-                startService(Intent(this@MainActivity, MonitorService::class.java)
-                    .setAction(MonitorService.ACTION_SET_DEBUG)
-                    .putExtra("enabled", on))
-            }
-        })
         col.addView(Button(this).apply {
-            text = "Run watch latency drill (M0 S1)"
+            text = "Debug & feasibility tests"
             setOnClickListener {
-                startService(Intent(this@MainActivity, MonitorService::class.java)
-                    .setAction(MonitorService.ACTION_LATENCY_DRILL))
-                Toast.makeText(this@MainActivity,
-                    "Drill running: watchapp opens, closes, relaunches with a " +
-                    "buzz in ~13 s. Result lands in the logs and the dashboard.",
-                    Toast.LENGTH_LONG).show()
-            }
-        })
-        col.addView(Button(this).apply {
-            text = "View logs"
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, LogActivity::class.java))
+                startActivity(Intent(this@MainActivity, DebugActivity::class.java))
             }
         })
 

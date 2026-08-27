@@ -19,6 +19,9 @@ static uint16_t s_heartbeat_countdown = CM_HEARTBEAT_INTERVAL_S;
 static uint16_t s_last_bpm;            /* last raw HR reading (0 = none) */
 static uint16_t s_drill_countdown;     /* S1 latency drill: seconds to fire */
 static uint32_t s_drill_arm_ms;        /* when WMSG_DRILL arrived */
+static uint8_t s_hr_lab;               /* S4 sensor lab: burst + hold + relay */
+static uint8_t s_lab_tick;
+static uint32_t s_last_hr_event_ms;    /* last HealthService HR event */
 static DataLoggingSessionRef s_log_session;
 
 /* ---- debug mode (toggled from the phone; view with `pebble logs`) ---- */
@@ -185,6 +188,7 @@ static void health_handler(HealthEventType event, void *context) {
   if (event == HealthEventHeartRateUpdate || event == HealthEventSignificantUpdate) {
     HealthValue bpm = health_service_peek_current_value(HealthMetricHeartRateRawBPM);
     s_last_bpm = bpm > 0 ? (uint16_t)bpm : 0;
+    s_last_hr_event_ms = now_ms();
     if (s_debug) {
       s_dbg_hr_updates++;
       s_dbg_last_bpm = s_last_bpm;
@@ -229,6 +233,28 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
     APP_LOG(APP_LOG_LEVEL_INFO, "latency drill fired");
   }
 
+  /* S4 sensor lab: every 2 s relay the raw peek value, the event age,
+   * and the free heap to the (open) app -> phone. The peek is exactly
+   * what the detectors would see; the age shows whether the sensor is
+   * still producing events at all in this wear condition. */
+  if (s_hr_lab && (++s_lab_tick & 1)) {
+    HealthValue v = 0;
+#if defined(PBL_HEALTH)
+    v = health_service_peek_current_value(HealthMetricHeartRateRawBPM);
+#endif
+    uint32_t heap = heap_bytes_free();
+    if (heap > 255u * 64u) heap = 255u * 64u;
+    uint32_t age_s = s_last_hr_event_ms
+        ? (now_ms() - s_last_hr_event_ms) / 1000u : 9999u;
+    if (age_s > 9999u) age_s = 9999u;
+    AppWorkerMessage lab = {
+      .data0 = (uint16_t)(v > 0 ? (v > 255 ? 255 : v) : 0),
+      .data1 = (uint16_t)(heap / 64u),
+      .data2 = (uint16_t)age_s,
+    };
+    app_worker_send_message(WMSG_HR_SAMPLE, &lab);
+  }
+
   if (--s_heartbeat_countdown == 0) {
     s_heartbeat_countdown = CM_HEARTBEAT_INTERVAL_S;
     log_heartbeat();
@@ -262,6 +288,13 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
       s_drill_countdown = CM_DRILL_DELAY_S;
       s_drill_arm_ms = now_ms();
       APP_LOG(APP_LOG_LEVEL_INFO, "latency drill armed (%us)", CM_DRILL_DELAY_S);
+      break;
+    case WMSG_HR_LAB:
+      s_hr_lab = (uint8_t)m->data0;
+      cm_set_lab_hold(&s_core, s_hr_lab, now_ms());
+      drain_actions();
+      set_hr_burst(s_hr_lab != 0); /* 1 s sampling for the lab duration */
+      APP_LOG(APP_LOG_LEVEL_INFO, "hr lab %s", s_hr_lab ? "ON" : "off");
       break;
     case WMSG_SET_DEBUG:
       s_debug = (uint8_t)m->data0;

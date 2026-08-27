@@ -629,6 +629,31 @@ static void test_charging_cancels_checkin_not_alarm(void) {
   CHECK(count_type(CM_ACT_ALERT_CANCELLED) == 0);
 }
 
+/* S4 sensor lab: silent detector hold — the guided test deliberately
+ * removes the watch, and nothing may fire during or right after. */
+static void test_lab_hold_is_silent(void) {
+  g_test = "lab_hold_is_silent";
+  cm_config cfg = test_cfg();
+  setup(&cfg);
+  warmup();
+
+  cm_set_lab_hold(&core, 1, now_ms);
+  drain();
+  log_reset();
+  mins_still(15); /* strap loose, table, face-down... total silence */
+  CHECK(log_count == 0);
+
+  cm_set_lab_hold(&core, 0, now_ms);
+  drain();
+  log_reset();
+  for (int i = 0; i < 120; i++) {  /* wearer puts it back on */
+    if (i % 20 == 0) sec_still_hr(68); else sec_still();
+  }
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 0);
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 0);
+}
+
 static void test_manual_sos(void) {
   g_test = "manual_sos";
   cm_config cfg = test_cfg();
@@ -687,6 +712,7 @@ int main(void) {
   test_suspension_grace_blocks_instant_resume();
   test_charging_hold();
   test_charging_cancels_checkin_not_alarm();
+  test_lab_hold_is_silent();
   test_manual_sos();
   test_hr_unavailable_hardware();
 

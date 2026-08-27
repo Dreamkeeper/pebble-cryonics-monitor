@@ -210,6 +210,10 @@ typedef struct {
 
   /* charging hold: watch on the charger = deliberate off-wrist */
   uint8_t  charging;
+
+  /* sensor-lab hold: guided S4 test drives the sensors deliberately —
+   * detectors must not interpret the test as an emergency */
+  uint8_t  lab_hold;
 } cm_core;
 
 void cm_config_defaults(cm_config *cfg);
@@ -227,6 +231,8 @@ void cm_suspend(cm_core *c, uint32_t seconds, uint8_t auto_resume, uint32_t now_
 void cm_resume(cm_core *c, uint32_t now_ms);       /* manual early resume */
 void cm_set_charging(cm_core *c, int charging, uint32_t now_ms);
                                     /* charger state = implicit suspension */
+void cm_set_lab_hold(cm_core *c, int hold, uint32_t now_ms);
+                                    /* S4 sensor lab: silent detector hold */
 
 /* Output: returns 1 while actions are pending */
 int cm_next_action(cm_core *c, cm_action *out);

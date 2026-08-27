@@ -84,12 +84,19 @@ loose; watch on a table? Does the system honor ~1 s in burst or throttle?
 valid reading"; the T4 field observation (instant "pulse" with the
 sensor against a surface) suggests phantom readings — this spike
 confirms or kills that.
-**Method:** debug ON, watchapp open, read the `bpm` line for ~5 min per
-condition: (1) worn, moving; (2) worn, dead still; (3) strap loose /
-watch resting on the palm; (4) on the table — flat, face-down, and
-pressed against fabric. Record value + how often it changes. For burst
-cadence: provoke a pulse hunt (condition 4 after wearing) and read
-`hr raw=… burst=1` lines via `pebble logs`.
+**Method (automated since v0.4.0):** Android app → Debug & feasibility
+tests → **Start sensor lab**. A guided ~13-minute sequence (worn-moving
+→ worn-still → strap-loose → table-flat → face-down → fabric): the
+watch switches to 1 s burst sampling with a silent detector hold (the
+deliberate off-wrist stages must not fire alarms), streams a sample
+every 2 s (raw peek bpm, seconds since the last HR event, worker heap),
+the phone narrates each stage and vibrates at transitions, then writes
+a per-stage summary + full CSV and offers **Share last lab results**.
+Reading the summary: worn stages should be ~100 % nonzero with small
+event ages; the off-wrist stages answer the phantom-pulse question —
+nonzero% there IS the false-"worn" rate the wear-detection logic must
+survive. minWorkerHeap in the header doubles as an S8 data point under
+burst load (worst case).
 **Go:** off-wrist/still states distinguishable from normal wear within 60 s
 using HR-signal-presence + accel variance together.
 **Result:** _pending_ (field hint 2026-08-18: watch on table appeared to

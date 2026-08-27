@@ -50,6 +50,12 @@ static uint16_t s_alert_seconds_left;
 static uint8_t s_drill_hold_ticks;
 /* S4 sensor lab: the app must stay open to relay worker HR samples. */
 static bool s_lab_hold;
+/* Phone-launched apps are opened FOR something (lab, drill) that arrives
+ * a few seconds later over AppMessage. The auto-launch guard must not
+ * pop the app before the phone has had time to state its business —
+ * the first status poll racing the lab-on message closed the app
+ * instantly (field bug, round 9). */
+static uint8_t s_phone_grace_ticks;
 
 static void ensure_worker_running(void);
 
@@ -423,7 +429,8 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
      * a screen the wearer never asked for. A nag launch is NOT stale:
      * it deliberately has no ladder stage. */
     if (s_auto_launched && !s_nag_hold && !s_lab_hold &&
-        s_drill_hold_ticks == 0 && stage == (uint16_t)CM_STAGE_NONE) {
+        s_drill_hold_ticks == 0 && s_phone_grace_ticks == 0 &&
+        stage == (uint16_t)CM_STAGE_NONE) {
       DLOG("stale worker launch: no active stage, returning to watchface");
       vibes_cancel();
       if (s_alert_window) window_stack_remove(s_alert_window, true);
@@ -520,6 +527,7 @@ static void main_window_unload(Window *w) {
 static void app_tick(struct tm *tick_time, TimeUnits changed) {
   static uint16_t s_hb_seq = 0;
   if (s_drill_hold_ticks) s_drill_hold_ticks--;
+  if (s_phone_grace_ticks) s_phone_grace_ticks--;
   /* Poll worker state so the status line stays truthful (suspension
    * countdown, auto-resume, ladder stage) — cheap worker IPC, no radio. */
   if (tick_time->tm_sec % 5 == 0) {
@@ -596,6 +604,7 @@ static void init(void) {
   s_launched_by_worker = (launch_reason() == APP_LAUNCH_WORKER);
   s_auto_launched = s_launched_by_worker ||
                     launch_reason() == APP_LAUNCH_PHONE;
+  if (launch_reason() == APP_LAUNCH_PHONE) s_phone_grace_ticks = 15;
   APP_LOG(APP_LOG_LEVEL_INFO, "launch reason=%d auto=%d",
           (int)launch_reason(), (int)s_auto_launched);
   if (s_launched_by_worker) {

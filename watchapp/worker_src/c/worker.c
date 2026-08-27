@@ -187,6 +187,15 @@ static void drain_actions(void) {
         persist_delete(PK_SUSPEND_AUTORESUME);
         notify_app(&a, false);
         break;
+      /* Dock/undock are deliberate wearer acts: launch the app briefly so
+       * the wearer sees "Charging"/"Monitoring" AND the phone learns the
+       * hold state + fresh battery (the worker itself cannot AppMessage;
+       * these were silently dropped before — field bug 2026-08-27). The
+       * auto-launch guard returns the watchface within seconds. */
+      case CM_ACT_CHARGING_STARTED:
+      case CM_ACT_CHARGING_ENDED:
+        notify_app(&a, true);
+        break;
       default: break;
     }
   }

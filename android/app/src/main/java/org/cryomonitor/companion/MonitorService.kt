@@ -609,7 +609,12 @@ class MonitorService : Service(), PebbleTransport.Listener {
         // spoke (only possible while it is open) — two different facts that
         // must not be conflated into one scary number.
         val link = if (watchConnected) "watch ✓" else "watch LINK DOWN"
-        val wb = watchBattery?.let { " ${it}%" } ?: ""
+        // A battery value older than an hour is fiction (it only updates
+        // when the watchapp speaks) — showing 42% while the watch sits at
+        // 85% misleads; drop it rather than lie.
+        val battFresh = lastWatchDataT > 0 &&
+            System.currentTimeMillis() - lastWatchDataT < 3_600_000
+        val wb = if (battFresh) watchBattery?.let { " ${it}%" } ?: "" else ""
         val sync = if (lastWatchDataT == 0L) ""
                    else " · synced ${humanAge(
                        System.currentTimeMillis() - lastWatchDataT)} ago"

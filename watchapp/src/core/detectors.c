@@ -347,6 +347,17 @@ static void tick_pulse(cm_core *c) {
 
 static void tick_impact(cm_core *c) {
   if (c->impact_phase != 2 || c->suspended || c->stage != CM_STAGE_NONE) return;
+  /* Off-wrist evidence (pulse frozen/absent beyond the flat window)
+   * suppresses the impact ladder: a table tremor is not a fall (field
+   * event 2026-08-27 — a bump check-inned a watch lying on the table),
+   * and a fallen WEARER is covered by the pulse ladder's flat trigger.
+   * Non-HR hardware keeps impact armed (assumed worn, documented). */
+  if (c->cfg.hr_available && c->ever_pulse &&
+      elapsed(c->now_ms, c->last_bpm_change_ms) >=
+          (uint32_t)c->cfg.pulse_flat_after_s * 1000u) {
+    c->impact_phase = 0;
+    return;
+  }
 
   uint32_t settle_end = c->impact_ms + (uint32_t)c->cfg.impact_settle_s * 1000u;
   if ((int32_t)(c->now_ms - settle_end) < 0) return; /* still settling */

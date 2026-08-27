@@ -714,6 +714,28 @@ static void test_jittering_rest_stays_silent(void) {
   CHECK(count_type(CM_ACT_NOTWORN_NAG) == 0);
 }
 
+/* Field event 2026-08-27: a table tremor ran the impact ladder on a
+ * watch lying off-wrist. With the pulse frozen beyond the flat window,
+ * the impact ladder must stand down — tremors are not falls. */
+static void test_impact_suppressed_offwrist(void) {
+  g_test = "impact_suppressed_offwrist";
+  cm_config cfg = test_cfg();
+  cfg.enabled[CM_DET_PULSE] = 0;    /* isolate the impact detector */
+  cfg.enabled[CM_DET_NOTWORN] = 0;
+  cfg.enabled[CM_DET_NONMOTION] = 0;
+  cfg.pulse_flat_after_s = 120;
+  setup(&cfg);
+  warmup();
+
+  for (int i = 0; i < 3 * 60; i++) {  /* off-wrist: frozen feed */
+    if (i % 2 == 0) sec_still_hr(82); else sec_still();
+  }
+  event_fall();                        /* table tremor */
+  secs_still(66);                      /* settle + immobility pass */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_ALARM) == 0);
+}
+
 /* Worker restarts while the watch lies off-wrist (build update on the
  * nightstand): no reading ever arrives, and the wearer must still be
  * told monitoring is blind — ever_pulse must not gate the nag. */
@@ -818,6 +840,7 @@ int main(void) {
   test_frozen_pulse_removal_nags();
   test_frozen_pulse_still_wearer_alarms();
   test_jittering_rest_stays_silent();
+  test_impact_suppressed_offwrist();
   test_never_worn_since_restart_still_nags();
   test_lab_hold_is_silent();
   test_manual_sos();

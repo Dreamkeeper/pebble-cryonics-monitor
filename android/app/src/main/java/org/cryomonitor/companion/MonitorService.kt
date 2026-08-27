@@ -39,6 +39,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     @Volatile private var workerLastRecT = 0L   // last DataLogging record (arrival)
     @Volatile private var lastSelfHealT = 0L    // throttle watchapp relaunches
     @Volatile private var labActive = false     // S4 lab in progress
+    private val dataLogReceiver = DataLogReceiver()
     @Volatile private var workerFaultNotified = false
     private val dlFlushLatencies = ArrayDeque<Long>() // S5 stats, last 30
     @Volatile private var watchConnected = false
@@ -61,6 +62,23 @@ class MonitorService : Service(), PebbleTransport.Listener {
 
         watchLink = WatchLink(context = this, scope = scope, listener = this)
         watchLink.start()
+        // The DL broadcasts are implicit: Android 8+ delivers them only to
+        // runtime-registered receivers (the manifest entry alone is dead
+        // weight). RECEIVER_EXPORTED: the sender is the Pebble phone app.
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(
+                dataLogReceiver,
+                android.content.IntentFilter().apply {
+                    addAction(DataLogReceiver.ACTION_RECEIVE_DATA)
+                    addAction(DataLogReceiver.ACTION_FINISH_SESSION)
+                }, RECEIVER_EXPORTED)
+            else @Suppress("UnspecifiedRegisterReceiverFlag") registerReceiver(
+                dataLogReceiver,
+                android.content.IntentFilter().apply {
+                    addAction(DataLogReceiver.ACTION_RECEIVE_DATA)
+                    addAction(DataLogReceiver.ACTION_FINISH_SESSION)
+                })
+        }
         selfHealLaunch("service start") // also relaunches the background worker
 
         scope.launch { watchdogLoop() }
@@ -644,6 +662,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
 
     override fun onDestroy() {
         stopSiren()
+        runCatching { unregisterReceiver(dataLogReceiver) }
         watchLink.stop()
         scope.cancel()
         super.onDestroy()

@@ -123,10 +123,13 @@ static void setup(const cm_config *cfg) {
   cm_init(&core, cfg, now_ms);
 }
 
-/* establish a "worn, alive" baseline: motion + pulse */
+/* establish a "worn, alive" baseline: motion, then a still-but-alive
+ * minute of JITTERING pulse — real HR is never flat (S4), and the last
+ * value change must clear the removal window before scenarios begin so
+ * a subsequent signal loss reads as arrest, not removal */
 static void warmup(void) {
   for (int i = 0; i < 5; i++) { sec_moving(); }
-  for (int i = 0; i < 5; i++) { sec_still_hr(70); }
+  for (int i = 0; i < 60; i++) { sec_still_hr((uint16_t)(70 + (i & 1))); }
   log_reset();
 }
 
@@ -143,6 +146,8 @@ static void test_defaults(void) {
   CHECK(cfg.countdown_impact_s < cfg.countdown_s); /* impacts get a faster fuse */
   CHECK(cfg.notworn_after_min == 3);   /* removal nags fast, never contacts */
   CHECK(cfg.pulse_proof_min == 5);     /* live pulse = proof of life */
+  CHECK(cfg.pulse_flat_after_s == 300); /* frozen value = stale (S4) */
+  CHECK(cfg.pulse_hunt_s == 45);       /* burst spin-up ~23 s measured (S4) */
   CHECK(cfg.removal_window_s == 45);   /* motion-after-pulse = removal */
   CHECK(cfg.resume_grace_s == 60);     /* auto-resume arming delay */
   /* Scheduled check-in is opt-in; every passive detector is on by default. */
@@ -322,8 +327,10 @@ static void test_nonmotion_daytime(void) {
   setup(&cfg);
   warmup();
 
-  /* perfectly still for 40 min on motion-only hardware */
-  mins_still(40);
+  /* perfectly still on motion-only hardware (warmup already banked
+   * 60 s of stillness — fire lands at the loop end, stage fresh) */
+  mins_still(39);
+  secs_still(5);
   const cm_action *ci = find_type(CM_ACT_CHECKIN_START);
   CHECK(ci != 0);
   CHECK(ci && ci->detector == CM_DET_NONMOTION);
@@ -363,7 +370,8 @@ static void test_still_with_pulse_stays_silent(void) {
   warmup();
 
   for (int i = 0; i < 50 * 60; i++) {   /* 50 min, well past day threshold */
-    if (i % 60 == 0) sec_still_hr(62); else sec_still();
+    if (i % 60 == 0) sec_still_hr((uint16_t)(62 + ((i / 60) & 1)));
+    else sec_still();
   }
   CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
   CHECK(count_type(CM_ACT_HR_BURST_ON) == 0);
@@ -383,7 +391,8 @@ static void test_nonmotion_backstop_stale_pulse(void) {
   warmup();
 
   for (int i = 0; i < 36 * 60; i++) {   /* still, pulse alive: silent */
-    if (i % 60 == 0) sec_still_hr(60); else sec_still();
+    if (i % 60 == 0) sec_still_hr((uint16_t)(60 + ((i / 60) & 1)));
+    else sec_still();
   }
   CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
 
@@ -629,6 +638,82 @@ static void test_charging_cancels_checkin_not_alarm(void) {
   CHECK(count_type(CM_ACT_ALERT_CANCELLED) == 0);
 }
 
+/* Simulate the S4 field finding: after removal (or arrest) the firmware
+ * keeps serving the last bpm with fresh events, bit-identical forever. */
+static void sec_still_hr_frozen(uint16_t bpm) { sec_still_hr(bpm); }
+
+/* S4 scenario: watch removed (handling motion near the freeze moment),
+ * then frozen-82 readings continue — must go to the NAG, not the ladder,
+ * and the frozen feed must not postpone the nag. */
+static void test_frozen_pulse_removal_nags(void) {
+  g_test = "frozen_pulse_removal_nags";
+  cm_config cfg = test_cfg();
+  cfg.notworn_after_min = 3;
+  cfg.pulse_flat_after_s = 300;
+  setup(&cfg);
+  warmup();
+
+  for (int i = 0; i < 10; i++) sec_moving();     /* unbuckle, set down */
+  for (int i = 0; i < 4 * 60; i++) {             /* frozen feed continues */
+    if (i % 2 == 0) sec_still_hr_frozen(82); else sec_still();
+  }
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 0);    /* no ladder */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_ALARM) == 0);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 1);    /* nag despite readings */
+}
+
+/* S4 scenario: arrest signature — wearer long still, the value freezes
+ * while events keep coming, no motion near the freeze. The flat trigger
+ * hunts; the hunt stays flat; the ladder must run. */
+static void test_frozen_pulse_still_wearer_alarms(void) {
+  g_test = "frozen_pulse_still_wearer_alarms";
+  cm_config cfg = test_cfg();
+  cfg.enabled[CM_DET_NONMOTION] = 0;  /* isolate the pulse path */
+  cfg.enabled[CM_DET_NOTWORN] = 0;
+  cfg.pulse_flat_after_s = 120;       /* compressed for the test */
+  setup(&cfg);
+  warmup();
+
+  /* value freezes at 76 but readings keep arriving every 2 s */
+  for (int i = 0; i < 121; i++) {
+    if (i % 2 == 0) sec_still_hr_frozen(76); else sec_still();
+  }
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 1);    /* flat -> silent hunt */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  log_reset();
+
+  for (int i = 0; i < 31; i++) {                 /* hunt: still frozen */
+    if (i % 2 == 0) sec_still_hr_frozen(76); else sec_still();
+  }
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 1);  /* hunt failed: ladder */
+  log_reset();
+
+  sec_still_hr(78); /* a CHANGING value dismisses the check-in */
+  const cm_action *cc = find_type(CM_ACT_ALERT_CANCELLED);
+  CHECK(cc != 0);
+  CHECK(cc && cc->reason == CM_CANCEL_PULSE);
+}
+
+/* Normal resting jitter (the worn_still lab stage: 74..81, changing
+ * every few samples) must never trigger anything. */
+static void test_jittering_rest_stays_silent(void) {
+  g_test = "jittering_rest_stays_silent";
+  cm_config cfg = test_cfg();
+  cfg.pulse_flat_after_s = 120;
+  cfg.pulse_lost_after_s = 150;  /* realistic: 60 s samples stay fresh */
+  setup(&cfg);
+  warmup();
+
+  for (int i = 0; i < 20 * 60; i++) {  /* 20 min still, pulse jitters */
+    if (i % 60 == 0) sec_still_hr((uint16_t)(76 + ((i / 60) % 3)));
+    else sec_still();
+  }
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 0);
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 0);
+}
+
 /* S4 sensor lab: silent detector hold — the guided test deliberately
  * removes the watch, and nothing may fire during or right after. */
 static void test_lab_hold_is_silent(void) {
@@ -712,6 +797,9 @@ int main(void) {
   test_suspension_grace_blocks_instant_resume();
   test_charging_hold();
   test_charging_cancels_checkin_not_alarm();
+  test_frozen_pulse_removal_nags();
+  test_frozen_pulse_still_wearer_alarms();
+  test_jittering_rest_stays_silent();
   test_lab_hold_is_silent();
   test_manual_sos();
   test_hr_unavailable_hardware();

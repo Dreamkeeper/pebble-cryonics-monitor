@@ -107,7 +107,14 @@ typedef struct {
   /* Pulse-loss gates */
   uint16_t pulse_lost_after_s;    /* signal absent this long -> start hunt
                                      (default 150; must exceed 2x normal HR sample period) */
-  uint16_t pulse_hunt_s;          /* burst-sampling hunt duration (default 30) */
+  uint16_t pulse_flat_after_s;    /* value unchanged this long -> stale even if
+                                     readings continue (default 300). S4 field
+                                     finding: off-body the firmware serves the
+                                     LAST bpm with fresh events, bit-identical
+                                     for many minutes; a live wearer always
+                                     jitters. Liveness = the value CHANGES. */
+  uint16_t pulse_hunt_s;          /* burst-sampling hunt duration (default 45;
+                                     S4 measured ~23 s burst spin-up lag) */
   uint16_t pulse_still_s;         /* must also be still this long (default 20) */
   uint8_t  pulse_min_bpm;         /* readings below this count as no signal (default 25) */
   uint16_t pulse_worn_grace_min;  /* pulse seen within this = "was worn" (default 10) */
@@ -174,7 +181,9 @@ typedef struct {
   uint8_t  motion_this_second;
 
   /* pulse tracking */
-  uint32_t last_pulse_ms;
+  uint32_t last_pulse_ms;         /* last valid READING (worn evidence) */
+  uint16_t last_bpm_value;
+  uint32_t last_bpm_change_ms;    /* last value CHANGE (liveness evidence) */
   uint8_t  ever_pulse;
   uint8_t  pulse_phase;          /* 0 idle, 1 hunting */
   uint32_t hunt_start_ms;

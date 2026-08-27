@@ -34,7 +34,8 @@ void cm_config_defaults(cm_config *cfg) {
   cfg->motion_jerk_mg = 60;
 
   cfg->pulse_lost_after_s = 150; /* must exceed 2x the normal HR sample period */
-  cfg->pulse_hunt_s = 30;
+  cfg->pulse_flat_after_s = 300; /* frozen value = stale (S4 lab finding) */
+  cfg->pulse_hunt_s = 45;        /* burst spin-up measured at ~23 s (S4) */
   cfg->pulse_still_s = 20;
   cfg->pulse_min_bpm = 25;
   cfg->pulse_worn_grace_min = 10;
@@ -78,6 +79,7 @@ void cm_init(cm_core *c, const cm_config *cfg, uint32_t now_ms) {
   c->now_ms = now_ms;
   c->last_motion_ms = now_ms;
   c->last_pulse_ms = now_ms;
+  c->last_bpm_change_ms = now_ms;
   c->checkin_due_ms = now_ms + (uint32_t)cfg->checkin_interval_min * 60000u;
   c->nonmotion_armed = 1;
 }
@@ -208,13 +210,22 @@ void cm_accel_feed(cm_core *c, const cm_accel_sample *s, uint32_t n, uint32_t no
 void cm_hr_feed(cm_core *c, uint16_t bpm, uint32_t now_ms) {
   c->now_ms = now_ms;
   if (!c->cfg.hr_available) return;
-  if (bpm >= c->cfg.pulse_min_bpm) {
-    c->last_pulse_ms = now_ms;
-    c->ever_pulse = 1;
+  if (bpm < c->cfg.pulse_min_bpm) return;
+  /* A valid READING is evidence the watch is worn-ish (grace window). */
+  c->last_pulse_ms = now_ms;
+  c->ever_pulse = 1;
+  /* S4 field finding (2026-08-27, Time 2): off-body the firmware keeps
+   * serving the LAST computed bpm with fresh events — bit-identical for
+   * many minutes across flat/face-down/fabric. A living wearer's raw
+   * bpm always jitters. So LIVENESS is a CHANGING value; only a change
+   * clears snoozes and nags, ends hunts, or dismisses check-ins. The
+   * 1 Hz hunt is the arbiter: alive jitters within seconds, a frozen
+   * feed stays flat and the ladder proceeds. */
+  if (bpm != c->last_bpm_value) {
+    c->last_bpm_value = bpm;
+    c->last_bpm_change_ms = now_ms;
     c->pulse_snoozed = 0;
     c->notworn_nagged = 0;
-    /* Returning pulse silently ends a hunt, and auto-dismisses a
-     * pulse-loss CHECKIN stage. Countdown stage stays: explicit cancel only. */
     if (c->pulse_phase == 1) end_pulse_machinery(c);
     if (c->stage == CM_STAGE_CHECKIN && c->stage_det == CM_DET_PULSE) {
       cancel_alert(c, CM_CANCEL_PULSE);
@@ -246,6 +257,7 @@ static void tick_suspension(cm_core *c) {
     /* fresh baselines: no instant triggers on resume */
     c->last_motion_ms = c->now_ms;
     c->last_pulse_ms = c->now_ms;
+    c->last_bpm_change_ms = c->now_ms;
     c->impact_phase = 0;
     emit(c, CM_ACT_SUSPEND_EXPIRED, 0, 0, 0);
     return;
@@ -269,6 +281,7 @@ static void tick_suspension(cm_core *c) {
       c->suspended = 0;
       c->last_motion_ms = c->now_ms;
       c->last_pulse_ms = c->now_ms;
+    c->last_bpm_change_ms = c->now_ms;
       c->impact_phase = 0;
       emit(c, CM_ACT_AUTO_RESUMED, 0, 0, 0);
     }
@@ -290,14 +303,15 @@ static void tick_ladder(cm_core *c) {
 }
 
 /* Removal vs. arrest: a dead wearer does not move after the pulse stops;
- * removing a watch necessarily moves it. Evaluated only at hunt-trigger
- * time (wearer still, pulse long gone), so "motion shortly AFTER the last
- * valid pulse, then stillness" is the removal signature — such an episode
- * belongs to the not-worn nag, not the alarm ladder. */
+ * removing a watch necessarily moves it. The reference moment is the
+ * last VALUE CHANGE (readings may continue frozen after removal — S4):
+ * handling motion near that moment, then stillness, is the removal
+ * signature — such an episode belongs to the not-worn nag, not the
+ * alarm ladder. Evaluated only at hunt-trigger time. */
 static int removal_suspected(const cm_core *c) {
-  return (int32_t)(c->last_motion_ms - c->last_pulse_ms) > 0 &&
-         (uint32_t)(c->last_motion_ms - c->last_pulse_ms) <=
-             (uint32_t)c->cfg.removal_window_s * 1000u;
+  uint32_t w = (uint32_t)c->cfg.removal_window_s * 1000u;
+  int32_t d = (int32_t)(c->last_motion_ms - c->last_bpm_change_ms);
+  return d >= 0 ? (uint32_t)d <= w : (uint32_t)(-d) <= w;
 }
 
 static void tick_pulse(cm_core *c) {
@@ -306,11 +320,15 @@ static void tick_pulse(cm_core *c) {
   if (c->pulse_snoozed && (int32_t)(c->pulse_snooze_until_ms - c->now_ms) > 0) return;
 
   uint32_t since_pulse = elapsed(c->now_ms, c->last_pulse_ms);
+  uint32_t since_change = elapsed(c->now_ms, c->last_bpm_change_ms);
   uint32_t since_motion = elapsed(c->now_ms, c->last_motion_ms);
 
   if (c->pulse_phase == 0) {
-    if (worn_recently(c) &&
-        since_pulse >= (uint32_t)c->cfg.pulse_lost_after_s * 1000u &&
+    /* Two loss signatures: readings STOP (lost), or readings continue
+     * but the value froze (flat — off-body/arrest per S4). */
+    int lost = since_pulse >= (uint32_t)c->cfg.pulse_lost_after_s * 1000u;
+    int flat = since_change >= (uint32_t)c->cfg.pulse_flat_after_s * 1000u;
+    if (worn_recently(c) && (lost || flat) &&
         since_motion >= (uint32_t)c->cfg.pulse_still_s * 1000u) {
       if (removal_suspected(c)) return; /* not-worn nag owns this episode */
       c->pulse_phase = 1;
@@ -348,11 +366,12 @@ static void tick_nonmotion(cm_core *c) {
   if (c->stage != CM_STAGE_NONE || !c->nonmotion_armed) return;
   if (!worn_recently(c)) return; /* off-wrist is the not-worn detector's job */
   /* A live pulse is proof of life: stillness alone (sleep, meditation,
-   * TV) must never ping the wearer on HR hardware. Non-motion remains
-   * only as the backstop for a silently failing HR sensor — the band
-   * where the pulse went stale but the worn grace has not lapsed. */
+   * TV) must never ping the wearer on HR hardware. "Live" means the
+   * value still CHANGES (a frozen reading proves nothing — S4).
+   * Non-motion remains only as the backstop for a silently failing
+   * sensor inside the worn-grace band. */
   if (c->cfg.hr_available && c->ever_pulse &&
-      elapsed(c->now_ms, c->last_pulse_ms) <
+      elapsed(c->now_ms, c->last_bpm_change_ms) <
           (uint32_t)c->cfg.pulse_proof_min * 60000u) return;
 
   uint16_t mins = is_night(c) ? c->cfg.nonmotion_night_min : c->cfg.nonmotion_day_min;
@@ -385,8 +404,10 @@ static void tick_notworn(cm_core *c) {
   if (c->suspended || c->notworn_nagged || c->stage != CM_STAGE_NONE) return;
   if (c->pulse_phase != 0) return; /* a pulse hunt is running: let it conclude */
 
+  /* Off-wrist evidence = no LIVE pulse (frozen readings do not count —
+   * S4) and no motion for the threshold. */
   uint32_t th = (uint32_t)c->cfg.notworn_after_min * 60000u;
-  if (elapsed(c->now_ms, c->last_pulse_ms) >= th &&
+  if (elapsed(c->now_ms, c->last_bpm_change_ms) >= th &&
       elapsed(c->now_ms, c->last_motion_ms) >= th) {
     c->notworn_nagged = 1;
     emit(c, CM_ACT_NOTWORN_NAG, CM_DET_NOTWORN, 0, 0);
@@ -484,6 +505,7 @@ void cm_set_charging(cm_core *c, int charging, uint32_t now_ms) {
      * the charger must not fire the instant it comes off */
     c->last_motion_ms = now_ms;
     c->last_pulse_ms = now_ms;
+    c->last_bpm_change_ms = now_ms;
     c->impact_phase = 0;
     c->notworn_nagged = 0;
     c->nonmotion_armed = 1;
@@ -509,6 +531,7 @@ void cm_set_lab_hold(cm_core *c, int hold, uint32_t now_ms) {
   } else {
     c->last_motion_ms = now_ms;
     c->last_pulse_ms = now_ms;
+    c->last_bpm_change_ms = now_ms;
     c->impact_phase = 0;
     c->notworn_nagged = 0;
     c->nonmotion_armed = 1;
@@ -521,6 +544,7 @@ void cm_resume(cm_core *c, uint32_t now_ms) {
   c->suspended = 0;
   c->last_motion_ms = now_ms;
   c->last_pulse_ms = now_ms;
+  c->last_bpm_change_ms = now_ms;
   c->impact_phase = 0;
   emit(c, CM_ACT_AUTO_RESUMED, 0, 0, 0);
 }

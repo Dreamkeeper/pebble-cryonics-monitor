@@ -76,31 +76,26 @@ the symbol is compiled out of the worker API (SDK 4.9.169). The worker
 genuinely cannot vibrate; `worker_launch_app()` + foreground vibe is the
 only alarm path. Architecture assumption confirmed; no change needed.
 
-## S4 — Raw HR behavior at 1 s period — 🟡 instrumented, run the 4×5-min matrix
-**Question:** What does `HealthMetricHeartRateRawBPM` report (values +
-update cadence) when: worn normally; worn but perfectly still; strap
-loose; watch on a table? Does the system honor ~1 s in burst or throttle?
-**Why it matters now:** the wear-detection rework assumes off-body ≈ "no
-valid reading"; the T4 field observation (instant "pulse" with the
-sensor against a surface) suggests phantom readings — this spike
-confirms or kills that.
-**Method (automated since v0.4.0):** Android app → Debug & feasibility
-tests → **Start sensor lab**. A guided ~13-minute sequence (worn-moving
-→ worn-still → strap-loose → table-flat → face-down → fabric): the
-watch switches to 1 s burst sampling with a silent detector hold (the
-deliberate off-wrist stages must not fire alarms), streams a sample
-every 2 s (raw peek bpm, seconds since the last HR event, worker heap),
-the phone narrates each stage and vibrates at transitions, then writes
-a per-stage summary + full CSV and offers **Share last lab results**.
-Reading the summary: worn stages should be ~100 % nonzero with small
-event ages; the off-wrist stages answer the phantom-pulse question —
-nonzero% there IS the false-"worn" rate the wear-detection logic must
-survive. minWorkerHeap in the header doubles as an S8 data point under
-burst load (worst case).
-**Go:** off-wrist/still states distinguishable from normal wear within 60 s
-using HR-signal-presence + accel variance together.
-**Result:** _pending_ (field hint 2026-08-18: watch on table appeared to
-keep a "pulse" — phantom readings likely; quantify here)
+## S4 — Raw HR behavior at 1 s period — ✅ ANSWERED (guided lab, 2026-08-27)
+
+**Result (Time 2, full lab run):** worn stages read 100 % nonzero with
+live jitter (moving 68–88, still 74–81, loose strap still tracks
+75–80). **Off-body, the firmware never reports "no reading": it serves
+the LAST computed bpm with fresh events — bit-identical (82) for 9+
+minutes across table-flat, face-down, and fabric.** Event cadence stays
+~1 Hz in burst. Burst spin-up after a period switch: first event ~23 s.
+**Consequences (implemented in wear-detection-tuning round 2): pulse
+LIVENESS = a CHANGING value.** A frozen feed triggers the hunt
+(`pulse_flat_after_s` 300 s); only a changed value ends hunts or
+dismisses pulse check-ins; removal discrimination, non-motion
+proof-of-life, and the not-worn nag key on the change timestamp;
+`pulse_hunt_s` raised to 45 s for the spin-up lag. Original go
+criterion (off-wrist distinguishable within 60 s of signal+stillness)
+is NOT met by signal presence alone — it IS met by signal *flatness*,
+within `pulse_flat_after_s`.
+**To re-run** (new watch, new strap, firmware update): Android app →
+Debug & feasibility tests → **Start sensor lab** — guided,
+confirmation-gated stages, recorded and shareable.
 
 ## S5 — DataLogging heartbeat latency — 🟡 receiver shipped, run the field hour
 **Question:** When BT-connected, how quickly does a DataLogging session
@@ -145,7 +140,12 @@ polls, and E2E T1/T2 all ran through it on the Time 2 + Xiaomi 17 Ultra.
 Classic broadcast-intent fallback retained but unused. DataLogging
 support remains unverified → S5.
 
-## S8 — Worker memory headroom — 🟡 read it off the watch
+## S8 — Worker memory headroom — ✅ GO, thin margin (lab, 2026-08-27)
+
+**Result:** 2112 B free throughout a full sensor lab — burst HR +
+accel + detector state + lab relay, the worst case measured — against
+the > 2048 B gate. **GO by 64 bytes**: any future worker feature must
+re-check this number (the debug line shows it live).
 **Question:** Actual free heap in the worker on emery after subscribing to
 accel (25-sample batch) + HealthService events (~2 kB) + detector state.
 **Method:** debug ON, watchapp open → `heap <bytes>` on the debug line

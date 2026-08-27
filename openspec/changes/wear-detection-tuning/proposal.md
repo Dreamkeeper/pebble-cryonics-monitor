@@ -37,6 +37,21 @@ as interchangeable, and treated any pulse reading as trustworthy.
   signal counts during the first minute.
 - Remaining-suspension displays round minutes **up**.
 
+## Round-2 revision from the S4 sensor lab (2026-08-27)
+
+The guided lab delivered the decisive fact: **off-body, the firmware
+serves the last computed bpm with fresh events — bit-identical for 9+
+minutes across table/face-down/fabric** (frozen 82 in the owner's run),
+while every worn stage jittered constantly (74–88). "A reading arrived"
+therefore proves nothing about life. Revision: **liveness = a CHANGING
+value**. New `pulse_flat_after_s` (300 s) triggers the hunt on a frozen
+feed; only a changed value ends hunts/dismisses check-ins (the 1 Hz
+hunt is the arbiter — alive-at-rest jitters within seconds); the
+removal discriminator, the non-motion proof-of-life gate, and the
+not-worn nag all key on the change timestamp. `pulse_hunt_s` 30→45 s
+(burst spin-up measured at ~23 s). Without this revision, removal
+defeated every detector indefinitely — and an arrest may have, too.
+
 ## Documented residual risks (accepted)
 
 - A collapse whose motion lands just after the last pulse reading is

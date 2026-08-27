@@ -3,48 +3,58 @@
 ## MODIFIED Requirements
 
 ### Requirement: Pulse-loss detection on HR hardware
-On watches with a heart-rate sensor (emery, diorite), the system SHALL
-start a silent "pulse hunt" (HR burst sampling at 1 s for pulse_hunt_s,
-default 30 s) when the raw HR signal has been absent for
-pulse_lost_after_s (default 150 s — MUST exceed 2x the normal HR sample
-period, user-configurable) while the wearer is still (pulse_still_s,
-default 20 s) and the watch was recently worn (pulse seen within
-pulse_worn_grace_min, default 10 min). Only a failed hunt escalates to
-CHECKIN. Readings below pulse_min_bpm (default 25) count as no signal.
+On watches with a heart-rate sensor (emery, diorite), pulse LIVENESS
+SHALL mean a CHANGING raw value: the S4 sensor lab (2026-08-27, Time 2)
+proved that off-body the firmware keeps serving the last computed bpm
+with fresh events — bit-identical for many minutes — while a living
+wearer's raw bpm always jitters. A frozen reading is only evidence the
+watch was recently worn (grace), never evidence of life.
 
-Before starting a hunt, the episode SHALL be classified: if motion was
-observed within removal_window_s (default 45 s) AFTER the last valid
-pulse reading, the loss is PROBABLE REMOVAL — a dead wearer does not
-move after the pulse stops, while removing a watch necessarily moves
-it — and the pulse ladder SHALL NOT run; the not-worn nag owns the
-episode. A loss with no motion after the last pulse (still wearer)
-keeps the full ladder. Residual risks are documented and accepted: a
-collapse whose motion lands just after the last pulse reading routes to
-the nag (the impact detector covers falls), and a removal too gentle to
-register motion still runs the ladder (the phone cancel absorbs it).
+The system SHALL start a silent "pulse hunt" (HR burst sampling at 1 s
+for pulse_hunt_s, default 45 s — burst spin-up was measured at ~23 s)
+when EITHER readings have been absent for pulse_lost_after_s (default
+150 s) OR the value has not changed for pulse_flat_after_s (default
+300 s) while the wearer is still (pulse_still_s, default 20 s) and the
+watch was recently worn (a reading within pulse_worn_grace_min, default
+10 min). Only a CHANGED value ends a hunt or dismisses a pulse-loss
+CHECKIN; a frozen feed lets the ladder proceed — the 1 Hz hunt is the
+arbiter between alive-at-rest (jitters within seconds) and frozen.
+Readings below pulse_min_bpm (default 25) count as no signal.
+
+Before starting a hunt, the episode SHALL be classified: motion within
+removal_window_s (default 45 s) of the last VALUE CHANGE is PROBABLE
+REMOVAL — a dead wearer does not move as the pulse stops, while
+removing a watch necessarily moves it — and the pulse ladder SHALL NOT
+run; the not-worn nag owns the episode. A freeze with no motion near
+the change moment (still wearer) keeps the full ladder. Residual risks
+are documented and accepted: a collapse whose motion lands at the
+freeze moment routes to the nag (the impact detector covers falls), and
+a removal too gentle to register motion still runs the ladder (the
+phone cancel absorbs it).
 
 #### Scenario: Pulse loss escalates through the full ladder
-- **WHEN** the pulse signal disappears while the wearer is still
-- **AND** no motion occurred after the last valid pulse reading
-- **AND** the silent hunt finds no pulse
+- **WHEN** the pulse stops or freezes while the wearer is still
+- **AND** no motion occurred near the last value change
+- **AND** the silent hunt sees no CHANGING value
 - **THEN** CHECKIN starts, then COUNTDOWN, then ALARM, and HR burst
   sampling is released when the ladder ends
 
 #### Scenario: Taking the watch off routes to the nag, not the ladder
-- **WHEN** the pulse signal disappears
-- **AND** motion was observed within removal_window_s after the last
-  valid pulse (handling: unbuckling, setting the watch down)
+- **WHEN** the pulse value freezes (readings may continue frozen)
+- **AND** motion was observed within removal_window_s of the last value
+  change (handling: unbuckling, setting the watch down)
 - **THEN** no hunt and no CHECKIN start for this episode
-- **AND** the not-worn nag fires at its own threshold
+- **AND** the not-worn nag fires at its own threshold despite the
+  continuing frozen readings
 
 #### Scenario: Pulse returns during the hunt
 - **WHEN** a pulse hunt is running
-- **AND** a valid HR reading arrives
+- **AND** a reading with a CHANGED value arrives
 - **THEN** the hunt ends silently with no user-visible alert
 
 #### Scenario: Returning pulse dismisses the check-in
 - **WHEN** a pulse-loss alert is in CHECKIN stage
-- **AND** a valid HR reading arrives
+- **AND** a reading with a CHANGED value arrives
 - **THEN** the alert cancels with reason PULSE
 
 #### Scenario: User cancellation snoozes re-triggering

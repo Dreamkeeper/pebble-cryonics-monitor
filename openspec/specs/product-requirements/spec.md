@@ -84,8 +84,10 @@ permanently on screen, watchface-fused) is REMOVED from scope by owner
 decision (2026-08-18): S1 measured the worker alarm path at 71 ms
 against a 3 s gate, and the watchface analysis showed no variant
 retains the alert ladder's buttons — the hedge no longer buys anything.
-The background-silence gap is addressed by DataLogging heartbeats
-(M0 S5), not by claiming the screen.
+The background-silence gap is NOT addressed by claiming the screen;
+M0 S5 found the DataLogging path dead in the current phone stack
+(2026-08-27), so the fallback mechanism is an open decision tracked in
+the companion-watch-liveness change.
 
 #### Scenario: The watchface stays the wearer's
 - **WHEN** monitoring is active and no alert needs attention

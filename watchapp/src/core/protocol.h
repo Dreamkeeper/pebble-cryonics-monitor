@@ -39,10 +39,26 @@ enum {
                              worker_launch_app() alert */
   WMSG_HR_LAB = 10,       /* app->worker: data0 = 1/0 — S4 sensor lab:
                              burst HR sampling + silent detector hold */
-  WMSG_HR_SAMPLE = 11     /* worker->app (lab only, every 2 s):
+  WMSG_HR_SAMPLE = 11,    /* worker->app (lab only, every 2 s):
                              data0 = raw peek bpm, data1 = free heap / 64 B,
                              data2 = seconds since last HR event */
+  WMSG_DIAG = 12          /* worker->app (debug only, with each status):
+                             data0 = s since last bpm CHANGE (cap 9999),
+                             data1 = s since last motion (cap 9999),
+                             data2 = CM_DIAG_* flag bits */
 };
+
+/* WMSG_DIAG / heartbeat-record flag bits */
+#define CM_DIAG_CHARGING   0x01
+#define CM_DIAG_LAB_HOLD   0x02
+#define CM_DIAG_HUNTING    0x04
+#define CM_DIAG_NAGGED     0x08
+#define CM_DIAG_EVER_PULSE 0x10
+#define CM_DIAG_SUSPENDED  0x20
+
+/* DataLogging heartbeat: tag 0xC202 = the 14-byte v2 record (v1 was 8
+ * bytes under 0xC201; the phone parses either by size). */
+#define CM_DL_TAG 0xC202
 
 /* MSG_TYPE values for AppMessage to/from the phone. */
 enum {

@@ -714,6 +714,24 @@ static void test_jittering_rest_stays_silent(void) {
   CHECK(count_type(CM_ACT_NOTWORN_NAG) == 0);
 }
 
+/* Worker restarts while the watch lies off-wrist (build update on the
+ * nightstand): no reading ever arrives, and the wearer must still be
+ * told monitoring is blind — ever_pulse must not gate the nag. */
+static void test_never_worn_since_restart_still_nags(void) {
+  g_test = "never_worn_since_restart_still_nags";
+  cm_config cfg = test_cfg();
+  cfg.notworn_after_min = 3;
+  setup(&cfg);           /* NO warmup: fresh restart, zero readings */
+
+  mins_still(4);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 1);
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);  /* never-worn: no ladder */
+  CHECK(count_type(CM_ACT_ALARM) == 0);
+
+  mins_still(10);        /* once per episode */
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 1);
+}
+
 /* S4 sensor lab: silent detector hold — the guided test deliberately
  * removes the watch, and nothing may fire during or right after. */
 static void test_lab_hold_is_silent(void) {
@@ -800,6 +818,7 @@ int main(void) {
   test_frozen_pulse_removal_nags();
   test_frozen_pulse_still_wearer_alarms();
   test_jittering_rest_stays_silent();
+  test_never_worn_since_restart_still_nags();
   test_lab_hold_is_silent();
   test_manual_sos();
   test_hr_unavailable_hardware();

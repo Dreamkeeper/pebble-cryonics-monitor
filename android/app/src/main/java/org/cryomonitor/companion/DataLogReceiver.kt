@@ -63,21 +63,30 @@ class DataLogReceiver : BroadcastReceiver() {
         }.onFailure { CmLog.w(TAG, "DL ack failed: $it") }
     }
 
-    /** cm_heartbeat_rec: u32 epoch_s LE, u8 stage, battery, bpm, suspended. */
+    /** cm_heartbeat_rec: v1 = 8 bytes (epoch u32 LE, stage, battery, bpm,
+     *  suspended); v2 = 14 bytes adding change_age u16, motion_age u16,
+     *  flags, pad — the remote detector-diagnostics channel. */
     private fun parseHeartbeat(context: Context, bytes: ByteArray) {
-        if (bytes.size != 8) {
+        if (bytes.size != 8 && bytes.size != 14) {
             CmLog.w(TAG, "DL record has unexpected size ${bytes.size}")
             return
         }
-        val epochS = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-            .int.toLong() and 0xFFFFFFFFL
+        val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val epochS = buf.int.toLong() and 0xFFFFFFFFL
         val stage = bytes[4].toInt()
         val battery = bytes[5].toInt() and 0xFF
         val bpm = bytes[6].toInt() and 0xFF
         val suspended = bytes[7].toInt()
+        val diag = if (bytes.size == 14) {
+            val changeAge = buf.getShort(8).toInt() and 0xFFFF
+            val motionAge = buf.getShort(10).toInt() and 0xFFFF
+            val flags = bytes[12].toInt() and 0xFF
+            " changeAge=${changeAge}s motionAge=${motionAge}s " +
+                "flags=0x%02x".format(flags)
+        } else ""
         val flushS = System.currentTimeMillis() / 1000 - epochS
         CmLog.i(TAG, "WORKER HEARTBEAT via DataLogging: stage=$stage " +
-            "batt=$battery% bpm=$bpm susp=$suspended flush-latency=${flushS}s")
+            "batt=$battery% bpm=$bpm susp=$suspended flush-latency=${flushS}s$diag")
         // The monitor runs as a foreground service, so this both delivers
         // to a live service and revives a dead one.
         runCatching {

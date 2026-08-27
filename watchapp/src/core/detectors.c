@@ -400,7 +400,12 @@ static void tick_checkin(cm_core *c) {
 }
 
 static void tick_notworn(cm_core *c) {
-  if (!c->cfg.enabled[CM_DET_NOTWORN] || !c->cfg.hr_available || !c->ever_pulse) return;
+  /* Deliberately NOT gated on ever_pulse: a worker that restarts while
+   * the watch lies off-wrist (build update, reboot on the nightstand)
+   * may never see a single reading — that watch is exactly the one
+   * whose wearer must be told monitoring is blind. One nag per
+   * episode; motion or a live pulse re-arms it. */
+  if (!c->cfg.enabled[CM_DET_NOTWORN] || !c->cfg.hr_available) return;
   if (c->suspended || c->notworn_nagged || c->stage != CM_STAGE_NONE) return;
   if (c->pulse_phase != 0) return; /* a pulse hunt is running: let it conclude */
 

@@ -21,6 +21,8 @@ static uint16_t s_drill_countdown;     /* S1 latency drill: seconds to fire */
 static uint32_t s_drill_arm_ms;        /* when WMSG_DRILL arrived */
 static uint8_t s_hr_lab;               /* S4 sensor lab: burst + hold + relay */
 static uint8_t s_lab_tick;
+static uint16_t s_lab_elapsed_s;       /* lab watchdog: a lost stop message
+                                          must not hold detectors forever */
 static uint32_t s_last_hr_event_ms;    /* last HealthService HR event */
 static DataLoggingSessionRef s_log_session;
 
@@ -52,13 +54,18 @@ static const char *action_name(uint8_t t) {
   }
 }
 
-/* Heartbeat record for DataLogging (phone-side watchdog + audit trail). */
+/* Heartbeat record v2 for DataLogging (phone-side watchdog + audit
+ * trail + remote detector diagnostics — tag CM_DL_TAG, 14 bytes). */
 typedef struct __attribute__((packed)) {
   uint32_t epoch_s;
   uint8_t stage;
   uint8_t battery_pct;
   uint8_t last_bpm;
   uint8_t suspended;
+  uint16_t change_age_s;   /* since last bpm VALUE CHANGE (liveness) */
+  uint16_t motion_age_s;
+  uint8_t flags;           /* CM_DIAG_* bits */
+  uint8_t pad;
 } cm_heartbeat_rec;
 
 static uint32_t now_ms(void) {
@@ -66,6 +73,20 @@ static uint32_t now_ms(void) {
   uint16_t ms;
   time_ms(&s, &ms);
   return (uint32_t)s * 1000u + ms;
+}
+
+static uint16_t age_s(uint32_t since_ms) {
+  uint32_t a = (now_ms() - since_ms) / 1000u;
+  return (uint16_t)(a > 9999u ? 9999u : a);
+}
+
+static uint8_t diag_flags(void) {
+  return (uint8_t)((s_core.charging ? CM_DIAG_CHARGING : 0) |
+                   (s_core.lab_hold ? CM_DIAG_LAB_HOLD : 0) |
+                   (s_core.pulse_phase ? CM_DIAG_HUNTING : 0) |
+                   (s_core.notworn_nagged ? CM_DIAG_NAGGED : 0) |
+                   (s_core.ever_pulse ? CM_DIAG_EVER_PULSE : 0) |
+                   (s_core.suspended ? CM_DIAG_SUSPENDED : 0));
 }
 
 static void push_status_to_app(void) {
@@ -83,6 +104,16 @@ static void push_status_to_app(void) {
     .data2 = (uint16_t)((cm_suspend_remaining_s(&s_core, now_ms()) + 59u) / 60u),
   };
   app_worker_send_message(WMSG_STATUS, &m);
+  if (s_debug) {
+    /* The exact numbers the not-worn/pulse gates run on — the field
+     * debugging channel for "why didn't it fire". */
+    AppWorkerMessage d = {
+      .data0 = age_s(s_core.last_bpm_change_ms),
+      .data1 = age_s(s_core.last_motion_ms),
+      .data2 = diag_flags(),
+    };
+    app_worker_send_message(WMSG_DIAG, &d);
+  }
 }
 
 /* Tell the foreground app about an action.
@@ -134,6 +165,7 @@ static void drain_actions(void) {
        * taking the screen for the nag is the point — otherwise the nag
        * is invisible in worker mode (the worker cannot vibrate). */
       case CM_ACT_NOTWORN_NAG:
+        APP_LOG(APP_LOG_LEVEL_INFO, "NOTWORN nag -> launching app");
         notify_app(&a, true);
         break;
 
@@ -214,6 +246,10 @@ static void log_heartbeat(void) {
     .battery_pct = battery_state_service_peek().charge_percent,
     .last_bpm = (uint8_t)(s_last_bpm > 255 ? 255 : s_last_bpm),
     .suspended = s_core.suspended,
+    .change_age_s = age_s(s_core.last_bpm_change_ms),
+    .motion_age_s = age_s(s_core.last_motion_ms),
+    .flags = diag_flags(),
+    .pad = 0,
   };
   data_logging_log(s_log_session, &rec, 1);
 }
@@ -237,6 +273,17 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
    * and the free heap to the (open) app -> phone. The peek is exactly
    * what the detectors would see; the age shows whether the sensor is
    * still producing events at all in this wear condition. */
+  /* Lab watchdog: the stop message travels app->worker and can be lost
+   * if the app closes at the wrong moment — auto-release after 30 min. */
+  if (s_hr_lab && ++s_lab_elapsed_s >= 1800) {
+    s_hr_lab = 0;
+    s_lab_elapsed_s = 0;
+    cm_set_lab_hold(&s_core, 0, now_ms());
+    drain_actions();
+    set_hr_burst(false);
+    APP_LOG(APP_LOG_LEVEL_WARNING, "sensor lab timed out — hold released");
+  }
+
   if (s_hr_lab && (++s_lab_tick & 1)) {
     HealthValue v = 0;
 #if defined(PBL_HEALTH)
@@ -291,6 +338,7 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
       break;
     case WMSG_HR_LAB:
       s_hr_lab = (uint8_t)m->data0;
+      s_lab_elapsed_s = 0;
       cm_set_lab_hold(&s_core, s_hr_lab, now_ms());
       drain_actions();
       set_hr_burst(s_hr_lab != 0); /* 1 s sampling for the lab duration */
@@ -363,7 +411,7 @@ static void init(void) {
   app_worker_message_subscribe(worker_message_handler);
 
   s_log_session = data_logging_create(
-      /* tag */ 0xC201, DATA_LOGGING_BYTE_ARRAY, sizeof(cm_heartbeat_rec),
+      CM_DL_TAG, DATA_LOGGING_BYTE_ARRAY, sizeof(cm_heartbeat_rec),
       /* resume */ true);
 }
 

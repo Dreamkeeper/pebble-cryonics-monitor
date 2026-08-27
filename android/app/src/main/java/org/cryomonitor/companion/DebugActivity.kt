@@ -44,9 +44,20 @@ class DebugActivity : AppCompatActivity() {
         Stage("table_facedown", "Flip the watch screen-DOWN\n(sensor facing up).", 120),
         Stage("fabric", "Press the sensor side\nagainst clothing or fabric.", 120))
 
-    private var labRunning = false
+    /**
+     * Lab flow (owner feedback, round 7): instruct FIRST, measure only
+     * after the wearer confirms the watch is in position — no scrambling
+     * against a countdown, and setup movement never pollutes the data.
+     * PREPARING doubles as a preflight: if the watch never streams a
+     * sample, the lab says so loudly instead of recording six empty
+     * stages (the n=0 failure mode of the first field run).
+     */
+    private enum class LabState { IDLE, PREPARING, BRIEFING, MEASURING, DONE }
+
+    private var labState = LabState.IDLE
     private var stageIdx = -1
     private var stageEndsAt = 0L
+    private var prepareDeadline = 0L
     private var labStartedAt = 0L
     private val csv = StringBuilder()
     private val stageSamples = HashMap<String, MutableList<Int>>()
@@ -57,6 +68,7 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var labInstruction: TextView
     private lateinit var labLive: TextView
     private lateinit var labBtn: Button
+    private lateinit var abortBtn: Button
     private lateinit var shareBtn: Button
     private lateinit var s5Line: TextView
     private lateinit var s6Line: TextView
@@ -138,9 +150,21 @@ class DebugActivity : AppCompatActivity() {
         col.addView(labLive)
         labBtn = Button(this).apply {
             text = "Start sensor lab"
-            setOnClickListener { if (labRunning) abortLab() else startLab() }
+            setOnClickListener {
+                when (labState) {
+                    LabState.IDLE, LabState.DONE -> startLab()
+                    LabState.BRIEFING -> beginMeasuring()
+                    else -> { /* hidden in other states */ }
+                }
+            }
         }
         col.addView(labBtn)
+        abortBtn = Button(this).apply {
+            text = "Abort lab"
+            visibility = android.view.View.GONE
+            setOnClickListener { abortLab() }
+        }
+        col.addView(abortBtn)
         shareBtn = Button(this).apply {
             text = "Share last lab results"
             visibility = android.view.View.GONE
@@ -189,7 +213,7 @@ class DebugActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        if (labRunning) stopLabOnWatch()
+        if (labState != LabState.IDLE && labState != LabState.DONE) stopLabOnWatch()
         super.onDestroy()
     }
 
@@ -197,11 +221,15 @@ class DebugActivity : AppCompatActivity() {
 
     private val ticker = object : Runnable {
         override fun run() {
-            if (labRunning) {
-                val left = ((stageEndsAt - System.currentTimeMillis()) / 1000)
-                    .coerceAtLeast(0)
-                if (left == 0L) advanceStage()
-                else updateLabHeader(left)
+            when (labState) {
+                LabState.PREPARING ->
+                    if (System.currentTimeMillis() > prepareDeadline) failPreflight()
+                LabState.MEASURING -> {
+                    val left = ((stageEndsAt - System.currentTimeMillis()) / 1000)
+                        .coerceAtLeast(0)
+                    if (left == 0L) endStage() else updateMeasuringHeader(left)
+                }
+                else -> {}
             }
             refreshPassiveCards()
             labInstruction.postDelayed(this, 1000)
@@ -209,55 +237,95 @@ class DebugActivity : AppCompatActivity() {
     }
 
     private fun startLab() {
-        labRunning = true
+        labState = LabState.PREPARING
         stageIdx = -1
         csv.clear()
         csv.append("t_rel_s,stage,bpm,event_age_s,heap_bytes\n")
         stageSamples.clear(); stageAges.clear()
         minHeap = Int.MAX_VALUE
         labStartedAt = System.currentTimeMillis()
-        labBtn.text = "Abort lab"
+        prepareDeadline = labStartedAt + 25_000
+        labBtn.visibility = android.view.View.GONE
+        abortBtn.visibility = android.view.View.VISIBLE
         shareBtn.visibility = android.view.View.GONE
+        labLive.text = ""
         startService(Intent(this, MonitorService::class.java)
             .setAction(MonitorService.ACTION_HR_LAB).putExtra("on", true))
         labInstruction.text = "Starting sensor lab on the watch…\n" +
-            "(watchapp opens by itself)"
-        // Give the watchapp time to open and the worker to switch to burst.
-        stageEndsAt = System.currentTimeMillis() + 8_000
-        stageIdx = -1
+            "(the watchapp opens by itself; waiting for the first sample)"
     }
 
-    private fun advanceStage() {
-        stageIdx++
-        if (stageIdx >= stages.size) { finishLab(); return }
+    /** No samples within the preflight window: name the likely cause. */
+    private fun failPreflight() {
+        stopLabOnWatch()
+        labState = LabState.IDLE
+        labBtn.text = "Start sensor lab"
+        labBtn.visibility = android.view.View.VISIBLE
+        abortBtn.visibility = android.view.View.GONE
+        labInstruction.text = "NO SAMPLES from the watch — lab aborted.\n" +
+            "Most likely the watchapp is not v0.4.0+ (check the version in " +
+            "the Core app), the watch is disconnected, or the watchapp " +
+            "could not open. Nothing was recorded."
+        CmLog.w("S4Lab", "preflight failed: no samples within 25 s")
+    }
+
+    private fun showBriefing() {
+        labState = LabState.BRIEFING
         val st = stages[stageIdx]
-        stageEndsAt = System.currentTimeMillis() + st.seconds * 1000L
+        labInstruction.text =
+            "Prepare stage ${stageIdx + 1}/${stages.size} " +
+            "(${st.seconds}s):\n${st.instruction}\n\n" +
+            "Set the watch up, then press START — measurement begins only " +
+            "after you confirm."
+        labBtn.text = "WATCH IS IN POSITION — START STAGE ${stageIdx + 1}"
+        labBtn.visibility = android.view.View.VISIBLE
         buzz()
-        updateLabHeader(st.seconds.toLong())
     }
 
-    private fun updateLabHeader(left: Long) {
-        val st = stages.getOrNull(stageIdx)
-        labInstruction.text = if (st == null)
-            "Starting sensor lab on the watch…" else
-            "Stage ${stageIdx + 1}/${stages.size} — ${left}s left\n${st.instruction}"
+    private fun beginMeasuring() {
+        labState = LabState.MEASURING
+        labBtn.visibility = android.view.View.GONE
+        stageEndsAt = System.currentTimeMillis() + stages[stageIdx].seconds * 1000L
+        updateMeasuringHeader(stages[stageIdx].seconds.toLong())
+    }
+
+    private fun endStage() {
+        buzz()
+        if (stageIdx + 1 >= stages.size) finishLab()
+        else { stageIdx++; showBriefing() }
+    }
+
+    private fun updateMeasuringHeader(left: Long) {
+        val st = stages[stageIdx]
+        labInstruction.text = "MEASURING stage ${stageIdx + 1}/${stages.size} " +
+            "— ${left}s left\n${st.instruction.replace('\n', ' ')}\n" +
+            "(hold this condition until the buzz)"
     }
 
     private fun onLabSample(bpm: Int, age: Int, heap: Int) {
-        if (!labRunning) return
+        if (labState == LabState.IDLE || labState == LabState.DONE) return
         if (heap in 1 until minHeap) minHeap = heap
+        labLive.text = "live: bpm $bpm · event age ${age}s · worker heap ${heap}B"
+        if (labState == LabState.PREPARING) {
+            // First sample = the watch is in lab mode: brief stage 1.
+            stageIdx = 0
+            showBriefing()
+            return
+        }
+        if (labState != LabState.MEASURING) return  /* setup time: not recorded */
         val st = stages.getOrNull(stageIdx) ?: return
         val tRel = (System.currentTimeMillis() - labStartedAt) / 1000
         csv.append("$tRel,${st.key},$bpm,$age,$heap\n")
         stageSamples.getOrPut(st.key) { mutableListOf() }.add(bpm)
         stageAges.getOrPut(st.key) { mutableListOf() }.add(age)
-        labLive.text = "live: bpm $bpm · event age ${age}s · worker heap ${heap}B"
     }
 
     private fun finishLab() {
         stopLabOnWatch()
-        labRunning = false
+        labState = LabState.DONE
         labBtn.text = "Start sensor lab"
+        labBtn.visibility = android.view.View.VISIBLE
+        abortBtn.visibility = android.view.View.GONE
         buzz(); buzz()
         val summary = buildSummary()
         val dir = getExternalFilesDir("logs") ?: File(filesDir, "logs")
@@ -274,9 +342,11 @@ class DebugActivity : AppCompatActivity() {
 
     private fun abortLab() {
         stopLabOnWatch()
-        labRunning = false
+        labState = LabState.IDLE
         labBtn.text = "Start sensor lab"
-        labInstruction.text = "Aborted."
+        labBtn.visibility = android.view.View.VISIBLE
+        abortBtn.visibility = android.view.View.GONE
+        labInstruction.text = "Aborted — nothing shared, partial file not kept."
     }
 
     private fun stopLabOnWatch() {
@@ -286,7 +356,8 @@ class DebugActivity : AppCompatActivity() {
 
     private fun buildSummary(): String {
         val sb = StringBuilder("# S4 HR sensor lab ${Date()}\n")
-        sb.append("# model=${Build.MODEL} minWorkerHeap=${minHeap}B\n")
+        sb.append("# model=${Build.MODEL} minWorkerHeap=" +
+            "${if (minHeap == Int.MAX_VALUE) "-" else "${minHeap}B"}\n")
         for (st in stages) {
             val s = stageSamples[st.key] ?: emptyList()
             val nz = s.filter { it > 0 }

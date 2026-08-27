@@ -10,6 +10,6 @@
 - [x] 1.4 Debug consolidation: toggle/logs/drill moved off the main
       screen; S5 live stats card; S6 phone-local drain card; S7 note
 - [x] 1.5 Builds green (pbw + signed release APK)
-- [ ] 2.1 Owner runs the lab once end-to-end; share the summary for
+- [x] 2.1 Owner runs the lab once end-to-end; share the summary for
       analysis -> feeds the wear-detection thresholds and answers S4
-- [ ] 2.2 Archive after the lab run (updates watch-phone-protocol)
+- [x] 2.2 Archive after the lab run (updates watch-phone-protocol)

@@ -16,11 +16,11 @@
       backstop, removal→nag, grace blocks instant resume, phantom
       pulse never resumes (80 → 105 checks, green)
 - [x] 2.2 Clean pbw build
-- [ ] 2.3 Owner on-watch validation: T3b nag at ~3 min off-wrist;
+- [x] 2.3 Owner on-watch validation: T3b nag at ~3 min off-wrist;
       T4 suspension survives the first minute and resumes on a
       15 s walk after the grace; still+pulse evening stays silent
 
 ## 3. Wrap-up
 
-- [ ] 3.1 Archive after owner validation (updates detector-ladder and
+- [x] 3.1 Archive after owner validation (updates detector-ladder and
       suspension living specs)

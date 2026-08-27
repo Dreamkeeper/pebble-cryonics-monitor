@@ -31,20 +31,31 @@ progress must be explicitly cancelled.
 - **THEN** no detector actions are emitted until expiry
 
 ### Requirement: Optional auto-resume on wear signals
-When auto-resume is enabled (default on), monitoring SHALL resume before
-expiry if the watch detects sustained motion (resume_motion_s consecutive
-seconds, default 15) or a valid pulse — and only a pulse read AFTER the
-suspension started counts; a stale pre-suspension reading MUST NOT
-trigger instant resume.
+When auto-resume is enabled (default on), monitoring SHALL resume
+before expiry only on sustained motion: resume_motion_s consecutive
+seconds (default 15), evaluated after an arming grace of resume_grace_s
+(default 60 s) from the suspension start. During the grace period all
+signals are ignored — the wearer is usually still wearing or handling
+the watch when the suspension begins. Pulse readings SHALL NOT resume a
+suspension at any point: the optical sensor phantom-reads when pressed
+against a surface, so the accelerometer is the only trusted wear
+signal.
 
 #### Scenario: Putting the watch back on resumes early
-- **WHEN** suspension is active with auto-resume enabled
-- **AND** the wearer puts the watch on (sustained motion or fresh pulse)
+- **WHEN** suspension is active with auto-resume enabled and the grace
+  period has passed
+- **AND** the wearer wears the watch with sustained motion
 - **THEN** AUTO_RESUMED is emitted and detectors re-arm
 
+#### Scenario: Suspending while still wearing does not instantly resume
+- **WHEN** the wearer starts a suspension without taking the watch off
+  and keeps moving
+- **THEN** no resume occurs within the grace period
+
 #### Scenario: Stale pulse does not resume
-- **WHEN** a suspension starts seconds after the last valid pulse reading
-- **THEN** that pre-suspension reading does not satisfy auto-resume
+- **WHEN** a suspended watch lies against a surface and the HR sensor
+  produces readings (phantom or stale)
+- **THEN** the suspension continues; only sustained motion resumes it
 
 ### Requirement: Expiry re-arms cleanly
 At expiry or resume, all detector baselines SHALL reset to "now" so the
@@ -82,3 +93,31 @@ activates them (deterministic-alarm-path principle).
 - **WHEN** the pattern miner detects a weekly watch-off window
 - **THEN** a suggestion is presented to the user
 - **AND** no automatic suspension occurs unless the user approves it
+
+### Requirement: Charging is an implicit suspension
+When the watch reports charger power (`is_plugged`), monitoring SHALL
+hold automatically: no detector may trigger and no hunts may run,
+exactly as during a suspension. Entering the hold SHALL cancel an
+active CHECKIN or COUNTDOWN with reason SUSPEND; a latched ALARM SHALL
+NOT be cleared by docking the watch. On unplug, all detector baselines
+SHALL reset so time on the charger cannot trigger anything instantly,
+and the not-worn nag re-arms. The hold state SHALL be visible on the
+watch ("Charging") and in the phone notification ("ON CHARGER"). The
+hold ends with the charger — an unplugged, unworn watch is subject to
+the normal removal/arrest rules thereafter.
+
+#### Scenario: Watch charges overnight in silence
+- **WHEN** the watch sits on its charger with no pulse and no motion
+  for hours
+- **THEN** no nag, hunt, check-in, or alarm is emitted, and the phone
+  shows the charging hold
+
+#### Scenario: Docking mid-check-in cancels it, docking mid-alarm does not
+- **WHEN** the wearer docks the watch during a CHECKIN stage
+- **THEN** the alert cancels with reason SUSPEND
+- **AND** if a latched ALARM was active instead, it remains latched
+
+#### Scenario: Unplugging does not instantly alert
+- **WHEN** the watch comes off the charger and is worn again
+- **THEN** no detector fires from the stillness accumulated while
+  charging

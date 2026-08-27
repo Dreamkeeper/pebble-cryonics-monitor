@@ -27,9 +27,9 @@
       First run exposed the phone-path arithmetic bug (guessed 10 s vs
       tick-aligned countdown) -> watch now reports arm->result total,
       phone derives pure BT transport (launch/watch/rtt/transport)
-- [ ] 2.4 Dashboard-queued drill path exercised once (command channel
+- [x] 2.4 Dashboard-queued drill path exercised once (command channel
       end-to-end on hardware)
 
 ## 3. Wrap-up
 
-- [ ] 3.1 Archive after the field run (updates watch-phone-protocol)
+- [x] 3.1 Archive after the field run (updates watch-phone-protocol)

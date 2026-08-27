@@ -122,3 +122,55 @@ WATCH_SILENT_AFTER_S (default 300 s) without watch data.
   Bluetooth remains connected
 - **THEN** the companion notifies the wearer of a probable worker
   eviction and attempts a watchapp relaunch
+
+### Requirement: Latency drill measures the real alarm path on demand
+The system SHALL provide an operator-triggered latency drill that
+exercises the production alarm path end to end: worker fire → persist
+handoff → `worker_launch_app()` → foreground vibration → AppMessage to
+the phone. The drill SHALL be triggerable from the web dashboard
+(admin; queued via the heartbeat command channel, delivered exactly
+once) and from the companion app (immediate). The worker SHALL wait a
+fixed arming delay (default 10 s) after the watchapp exits so the
+measured launch is a genuine cold start. Results SHALL be recorded as
+a server event carrying the watch-measured launch milliseconds, the
+phone-side round-trip estimate, and the phone model.
+
+#### Scenario: Dashboard-triggered drill produces a measurement
+- **WHEN** an admin queues a latency drill for a wearer
+- **THEN** the phone receives the command on its next heartbeat, at
+  most once
+- **AND** within the arming delay plus a few seconds the watch
+  vibrates, shows the launch latency, and a `latency_drill` event with
+  launch_ms and phone_model appears in the wearer's event feed
+
+#### Scenario: Drill leaves no residue
+- **WHEN** a latency drill completes
+- **THEN** no ladder stage, escalation, or persisted pending action
+  remains, and the watchapp returns to the watchface shortly after
+  showing the result
+
+### Requirement: Guided sensor lab streams raw HR telemetry on demand
+The companion SHALL be able to start and stop a sensor-lab mode on the
+watch (PMSG_HR_LAB). While active: the worker SHALL sample the raw HR
+metric in burst mode and relay, every 2 s, the raw peek value, the
+seconds since the last HealthService HR event, and its free heap to the
+companion via the open watchapp; the detector core SHALL be held
+silently (pre-alarm stages cancel, a latched ALARM survives, baselines
+reset on release) so deliberate off-wrist test stages cannot start
+ladders or nags; and the watchapp SHALL stay open (exempt from the
+auto-launch guard) to relay samples, returning to the watchface when
+the lab ends. The companion SHALL guide the wearer through the staged
+wear conditions, record all samples, and produce a shareable per-stage
+summary with the full sample log.
+
+#### Scenario: Off-wrist lab stages raise no alarms
+- **WHEN** the sensor lab is active and the watch lies on the table for
+  minutes without pulse or motion
+- **THEN** no check-in, hunt, nag, or alarm is emitted, and monitoring
+  resumes with fresh baselines when the lab ends
+
+#### Scenario: The lab yields a per-stage sensor characterization
+- **WHEN** the wearer completes the guided stages
+- **THEN** the companion stores and can share a summary showing, per
+  stage, the sample count, nonzero-reading share, bpm range, and median
+  event age — the data that decides the phantom-pulse question

@@ -5,5 +5,5 @@
 - [x] 1.2 Undelivered-scope list: drop the YaForecasWatch2 merge entry
 - [x] 1.3 docs/WORKER-VS-FOREGROUND.md records the decision; memory
       updated (settled decision)
-- [ ] 2.1 Archive (no field check needed — documentation-only change,
+- [x] 2.1 Archive (no field check needed — documentation-only change,
       owner already decided)

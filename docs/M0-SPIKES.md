@@ -97,7 +97,20 @@ within `pulse_flat_after_s`.
 Debug & feasibility tests → **Start sensor lab** — guided,
 confirmation-gated stages, recorded and shareable.
 
-## S5 — DataLogging heartbeat latency — 🟡 receiver shipped, run the field hour
+## S5 — DataLogging heartbeat latency — ❌ NO-GO (legacy path; adb-verified 2026-08-27)
+
+**Result:** during a ~10-minute adb-monitored session with the worker
+running, BT up, per-minute records being written on the watch, and the
+phone broadcasting REQUEST_DATA every 60 s, **zero DataLogging
+broadcasts reached the receiver** — the Core Devices app does not
+forward the legacy PebbleKit DataLogging protocol (and PK2 1.2.0 has no
+DataLogging API at all). The receiver stays installed and inert (it
+costs nothing and would light up if a future Core/PK2 release adds
+support); the worker-eviction watchdog stays correctly dormant (armed
+only after a first record). **Fallback decision pending:** periodic
+worker status sync via a brief worker_launch_app (the auto-pop guard
+returns the watchface in seconds), or accept app-open-only sync ages
+until PK2 grows DataLogging. Worth an upstream issue on PebbleKitAndroid2.
 **Question:** When BT-connected, how quickly does a DataLogging session
 flush to Android? Is PebbleKit2's DataLogging support functional?
 **State:** BOTH halves shipped. Watch: 8-byte `cm_heartbeat_rec` every

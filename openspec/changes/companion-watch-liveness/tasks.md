@@ -12,11 +12,11 @@
       threshold; FAULT + watchapp relaunch self-heal); per-minute
       REQUEST_DATA flush
 - [x] 1.5 Manifest receiver; builds green
-- [ ] 2.1 S5 field run: wear the watch ≥1 h with the watchapp CLOSED;
-      then read View logs for "WORKER HEARTBEAT via DataLogging" and
-      "S5: ... median=Ns". Go-gate: records arrive at all AND median
-      flush < 60 s. Also: notification "synced" age stays fresh with
-      the app closed
-- [ ] 2.2 If go: record S5 GO in M0-SPIKES; archive (updates
-      watch-phone-protocol). If no records: record NO-GO + fall back
-      to hourly worker status sync (new change)
+- [x] 2.1 S5 field run (adb-monitored, 2026-08-27): ~10 min, worker
+      running, BT up, REQUEST_DATA broadcast every 60 s — ZERO
+      DataLogging broadcasts received. The Core app does not forward
+      the legacy protocol; PK2 has no DataLogging API. NO-GO.
+- [ ] 2.2 Recorded in M0-SPIKES. Receiver stays (inert, future-proof);
+      eviction watchdog correctly dormant. Owner decision pending on
+      the fallback (periodic worker status sync vs. accept app-open
+      sync ages) — then rescope or archive this change accordingly

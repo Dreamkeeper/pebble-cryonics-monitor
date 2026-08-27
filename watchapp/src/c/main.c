@@ -51,6 +51,8 @@ static uint8_t s_drill_hold_ticks;
 /* S4 sensor lab: the app must stay open to relay worker HR samples. */
 static bool s_lab_hold;
 
+static void ensure_worker_running(void);
+
 static uint32_t app_now_ms(void) {
   time_t s; uint16_t ms;
   time_ms(&s, &ms);
@@ -524,6 +526,9 @@ static void app_tick(struct tm *tick_time, TimeUnits changed) {
     AppWorkerMessage m = {0};
     app_worker_send_message(WMSG_STATUS_REQ, &m);
   }
+  /* Covers the kill->launch race after a build-change worker restart,
+   * and generally re-arms a dead worker while the app is open. */
+  if (tick_time->tm_sec % 10 == 0) ensure_worker_running();
   if (tick_time->tm_sec == 0) { /* once a minute */
     DictionaryIterator *out;
     if (app_message_outbox_begin(&out) == APP_MSG_OK) {
@@ -543,6 +548,31 @@ static void ensure_worker_running(void) {
   }
 }
 
+static uint32_t build_id(void) {
+  const char *s = __DATE__ " " __TIME__;
+  uint32_t h = 5381;
+  while (*s) h = h * 33u + (uint8_t)*s++;
+  return h;
+}
+
+/* Sideloading a new .pbw does NOT restart a running worker: it keeps
+ * executing the OLD binary until killed (field finding 2026-08-27 — the
+ * v0.4.0 worker survived the v0.4.1 install and ate the not-worn nag).
+ * Detect a build change and force a worker restart; the periodic
+ * ensure_worker_running() in app_tick covers the kill/launch race. */
+static void ensure_worker_current(void) {
+  uint32_t id = build_id();
+  uint32_t stored = persist_exists(PK_BUILD_ID)
+      ? (uint32_t)persist_read_int(PK_BUILD_ID) : 0;
+  if (stored != id && app_worker_is_running()) {
+    APP_LOG(APP_LOG_LEVEL_INFO, "new build %lu (was %lu): restarting worker",
+            (unsigned long)id, (unsigned long)stored);
+    app_worker_kill();
+  }
+  persist_write_int(PK_BUILD_ID, (int32_t)id);
+  ensure_worker_running();
+}
+
 static void init(void) {
   s_debug = persist_exists(PK_DEBUG) ? (uint8_t)persist_read_int(PK_DEBUG) : 0;
   s_main_window = window_create();
@@ -556,7 +586,7 @@ static void init(void) {
 
   app_worker_message_subscribe(worker_message_handler);
   tick_timer_service_subscribe(SECOND_UNIT, app_tick);
-  ensure_worker_running();
+  ensure_worker_current();
 
   /* Launched by the worker? Pick up the parked action immediately.
    * Phone launches (reconnect self-heal, worker re-arm) count as

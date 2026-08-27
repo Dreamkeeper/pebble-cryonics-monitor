@@ -16,6 +16,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import org.cryomonitor.companion.Ui.caption
+import org.cryomonitor.companion.Ui.dataCard
 import org.cryomonitor.companion.Ui.title
 import java.io.File
 import java.text.SimpleDateFormat
@@ -67,6 +68,7 @@ class DebugActivity : AppCompatActivity() {
 
     private lateinit var labInstruction: TextView
     private lateinit var labLive: TextView
+    private lateinit var labResult: TextView
     private lateinit var labBtn: Button
     private lateinit var abortBtn: Button
     private lateinit var shareBtn: Button
@@ -146,8 +148,28 @@ class DebugActivity : AppCompatActivity() {
             text = "Not running."
         }
         col.addView(labInstruction)
-        labLive = TextView(this).apply { caption(); text = "" }
-        col.addView(labLive)
+        // M3 role separation: live measurements are DATA — monospace
+        // tabular figures on a container surface, never body prose.
+        labLive = TextView(this).apply {
+            dataCard()
+            visibility = android.view.View.GONE
+        }
+        col.addView(labLive, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = Ui.dp(this@DebugActivity, 4)
+                bottomMargin = Ui.dp(this@DebugActivity, 8) })
+        labResult = TextView(this).apply {
+            dataCard()
+            setBackgroundColor(Ui.surfaceVariant(this))
+            setTextColor(Ui.onSurfaceVariant(this))
+            textSize = 13f
+            visibility = android.view.View.GONE
+        }
+        col.addView(labResult, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = Ui.dp(this@DebugActivity, 8) })
         labBtn = Button(this).apply {
             text = "Start sensor lab"
             setOnClickListener {
@@ -248,6 +270,8 @@ class DebugActivity : AppCompatActivity() {
         labBtn.visibility = android.view.View.GONE
         abortBtn.visibility = android.view.View.VISIBLE
         shareBtn.visibility = android.view.View.GONE
+        labResult.visibility = android.view.View.GONE
+        labLive.visibility = android.view.View.GONE
         labLive.text = ""
         startService(Intent(this, MonitorService::class.java)
             .setAction(MonitorService.ACTION_HR_LAB).putExtra("on", true))
@@ -305,7 +329,9 @@ class DebugActivity : AppCompatActivity() {
     private fun onLabSample(bpm: Int, age: Int, heap: Int) {
         if (labState == LabState.IDLE || labState == LabState.DONE) return
         if (heap in 1 until minHeap) minHeap = heap
-        labLive.text = "live: bpm $bpm · event age ${age}s · worker heap ${heap}B"
+        labLive.visibility = android.view.View.VISIBLE
+        labLive.text = String.format(Locale.US,
+            "bpm %3d   event age %2d s   heap %4d B", bpm, age, heap)
         if (labState == LabState.PREPARING) {
             // First sample = the watch is in lab mode: brief stage 1.
             stageIdx = 0
@@ -335,7 +361,10 @@ class DebugActivity : AppCompatActivity() {
                 Locale.US).format(Date())}.csv")
         runCatching { f.writeText(summary + "\n" + csv.toString()) }
         lastResultFile = f
-        labInstruction.text = "DONE — summary:\n$summary"
+        labInstruction.text = "DONE — results below."
+        labLive.visibility = android.view.View.GONE
+        labResult.visibility = android.view.View.VISIBLE
+        labResult.text = summary.trimEnd()
         shareBtn.visibility = android.view.View.VISIBLE
         CmLog.i("S4Lab", "lab complete, ${csv.lines().size} lines -> ${f.name}")
     }

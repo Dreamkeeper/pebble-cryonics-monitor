@@ -36,6 +36,28 @@ object Ui {
         v, com.google.android.material.R.attr.colorError)
     fun onError(v: View): Int = MaterialColors.getColor(
         v, com.google.android.material.R.attr.colorOnError)
+    fun primaryContainer(v: View): Int = MaterialColors.getColor(
+        v, com.google.android.material.R.attr.colorPrimaryContainer)
+    fun onPrimaryContainer(v: View): Int = MaterialColors.getColor(
+        v, com.google.android.material.R.attr.colorOnPrimaryContainer)
+    fun surfaceVariant(v: View): Int = MaterialColors.getColor(
+        v, com.google.android.material.R.attr.colorSurfaceVariant)
+    fun onSurfaceVariant(v: View): Int = MaterialColors.getColor(
+        v, com.google.android.material.R.attr.colorOnSurfaceVariant)
+
+    /**
+     * M3 role separation for live DATA vs. instruction PROSE: measurements
+     * render as monospace tabular figures on a container surface, so a
+     * changing number can never be mistaken for guidance text.
+     */
+    fun TextView.dataCard() {
+        typeface = android.graphics.Typeface.MONOSPACE
+        textSize = 16f
+        setBackgroundColor(primaryContainer(this))
+        setTextColor(onPrimaryContainer(this))
+        setPadding(dp(context, 12), dp(context, 10),
+                   dp(context, 12), dp(context, 10))
+    }
 
     /**
      * Android 15+ forces edge-to-edge: without this, content draws under

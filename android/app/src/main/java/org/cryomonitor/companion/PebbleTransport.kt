@@ -23,6 +23,8 @@ class PebbleTransport(
     interface Listener {
         fun onAppMessage(data: Map<Int, Any>)
         fun onConnectionChanged(connected: Boolean)
+        /** The watchapp just opened on the watch (PK2 event). */
+        fun onWatchappOpened() {}
     }
 
     private var txId = 0

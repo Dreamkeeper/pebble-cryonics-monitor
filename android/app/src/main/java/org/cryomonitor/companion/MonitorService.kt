@@ -38,6 +38,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     @Volatile private var chargingHold = false  // watch on charger = paused
     @Volatile private var workerLastRecT = 0L   // last DataLogging record (arrival)
     @Volatile private var lastSelfHealT = 0L    // throttle watchapp relaunches
+    @Volatile private var labActive = false     // S4 lab in progress
     @Volatile private var workerFaultNotified = false
     private val dlFlushLatencies = ArrayDeque<Long>() // S5 stats, last 30
     @Volatile private var watchConnected = false
@@ -115,6 +116,9 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_SET_DEBUG,
                     PebbleTransport.KEY_SECONDS to
                         (if (settings.debugLogging) 1 else 0)))
+                if (labActive) watchLink.send(mapOf(
+                    PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_HR_LAB,
+                    PebbleTransport.KEY_SECONDS to 1))
                 CmLog.d(TAG, "watch heartbeat seq=${data[PebbleTransport.KEY_HEARTBEAT_SEQ]} " +
                     "batt=$watchBattery")
                 updateNotification()
@@ -188,6 +192,21 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 notifyFault("Watch appears OFF-WRIST (no pulse, no motion) " +
                     "without a suspension — monitoring is blind. Re-wear the " +
                     "watch or suspend monitoring. Contacts are NOT alerted.")
+            }
+        }
+    }
+
+    override fun onWatchappOpened() {
+        // The lab must survive any open path: auto-launch that raced the
+        // lab-on message, or the wearer opening the app by hand mid-lab.
+        // Re-arm shortly after the inbox registers.
+        if (labActive) scope.launch {
+            delay(1_500)
+            if (labActive) {
+                CmLog.i(TAG, "watchapp opened during lab — re-arming lab mode")
+                watchLink.send(mapOf(
+                    PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_HR_LAB,
+                    PebbleTransport.KEY_SECONDS to 1))
             }
         }
     }
@@ -456,6 +475,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
             ACTION_LATENCY_DRILL -> runLatencyDrill()
             ACTION_HR_LAB -> {
                 val on = intent.getBooleanExtra("on", false)
+                labActive = on
                 CmLog.i(TAG, "S4 sensor lab ${if (on) "START" else "STOP"}")
                 scope.launch {
                     if (on) { watchLink.startWatchapp(); delay(3_000) }

@@ -59,6 +59,7 @@ class DebugActivity : AppCompatActivity() {
     private var stageIdx = -1
     private var stageEndsAt = 0L
     private var prepareDeadline = 0L
+    private var prepareRetries = 0
     private var labStartedAt = 0L
     private val csv = StringBuilder()
     private val stageSamples = HashMap<String, MutableList<Int>>()
@@ -244,8 +245,23 @@ class DebugActivity : AppCompatActivity() {
     private val ticker = object : Runnable {
         override fun run() {
             when (labState) {
-                LabState.PREPARING ->
+                LabState.PREPARING -> {
+                    // Auto-open can race or fail silently (PK2 start refused,
+                    // lab-on sent before the inbox registered): retry the
+                    // whole start twice before giving up.
+                    val elapsed = System.currentTimeMillis() -
+                        (prepareDeadline - PREFLIGHT_MS)
+                    if (elapsed > (prepareRetries + 1) * 8_000L &&
+                        prepareRetries < 2) {
+                        prepareRetries++
+                        CmLog.i("S4Lab", "no samples yet — retry #$prepareRetries")
+                        startService(Intent(this@DebugActivity,
+                            MonitorService::class.java)
+                            .setAction(MonitorService.ACTION_HR_LAB)
+                            .putExtra("on", true))
+                    }
                     if (System.currentTimeMillis() > prepareDeadline) failPreflight()
+                }
                 LabState.MEASURING -> {
                     val left = ((stageEndsAt - System.currentTimeMillis()) / 1000)
                         .coerceAtLeast(0)
@@ -265,8 +281,9 @@ class DebugActivity : AppCompatActivity() {
         csv.append("t_rel_s,stage,bpm,event_age_s,heap_bytes\n")
         stageSamples.clear(); stageAges.clear()
         minHeap = Int.MAX_VALUE
+        prepareRetries = 0
         labStartedAt = System.currentTimeMillis()
-        prepareDeadline = labStartedAt + 25_000
+        prepareDeadline = labStartedAt + PREFLIGHT_MS
         labBtn.visibility = android.view.View.GONE
         abortBtn.visibility = android.view.View.VISIBLE
         shareBtn.visibility = android.view.View.GONE
@@ -286,6 +303,7 @@ class DebugActivity : AppCompatActivity() {
         labBtn.text = "Start sensor lab"
         labBtn.visibility = android.view.View.VISIBLE
         abortBtn.visibility = android.view.View.GONE
+        labLive.visibility = android.view.View.GONE
         labInstruction.text = "NO SAMPLES from the watch — lab aborted.\n" +
             "Most likely the watchapp is not v0.4.0+ (check the version in " +
             "the Core app), the watch is disconnected, or the watchapp " +
@@ -375,6 +393,9 @@ class DebugActivity : AppCompatActivity() {
         labBtn.text = "Start sensor lab"
         labBtn.visibility = android.view.View.VISIBLE
         abortBtn.visibility = android.view.View.GONE
+        labLive.visibility = android.view.View.GONE
+        labLive.text = ""
+        labResult.visibility = android.view.View.GONE
         labInstruction.text = "Aborted — nothing shared, partial file not kept."
     }
 
@@ -411,6 +432,8 @@ class DebugActivity : AppCompatActivity() {
             putExtra(Intent.EXTRA_TEXT, text)
         }, "Share S4 lab results"))
     }
+
+    private companion object { const val PREFLIGHT_MS = 30_000L }
 
     private fun buzz() {
         runCatching {

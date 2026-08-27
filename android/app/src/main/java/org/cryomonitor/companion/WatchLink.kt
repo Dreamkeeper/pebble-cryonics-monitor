@@ -109,6 +109,7 @@ class WatchLink(
     override fun onPk2AppOpened() {
         CmLog.i(TAG, "pk2: watchapp opened")
         listener.onConnectionChanged(true)
+        listener.onWatchappOpened()
     }
 
     override fun onPk2AppClosed() {

@@ -18,3 +18,6 @@
 - [ ] 7. Owner hardware verification: sensor-fault nag wording on a
        failed-HR boot; bag-carry suspension does not auto-resume;
        re-wear resumes within ~1 min.
+- [x] 8. Carry mode (owner follow-up 2026-08-29): long-press UP =
+       timer-only 120 min suspension — hand-carry puts real skin on
+       the sensor, indistinguishable from wear; watchapp 0.4.9.

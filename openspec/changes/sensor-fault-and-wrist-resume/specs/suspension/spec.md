@@ -46,3 +46,20 @@ window after expiry.
   motion but no changing bpm
 - **THEN** the suspension continues to its timer; motion alone is not
   wrist evidence on HR hardware
+
+## ADDED Requirements
+
+### Requirement: Carry suspension (timer-only) from the watch
+The watch UI SHALL offer a timer-only suspension ("carry" mode,
+long-press UP, 120 min default) alongside the auto-resuming presets.
+Rationale (field finding 2026-08-29): a hand-carried watch puts real
+skin on the optical sensor — a palm reads as a pulse exactly like a
+wrist, so no resume heuristic can distinguish hand-carry from wear.
+The wearer knows why they suspended; deliberate off-wrist transport
+gets a suspension that only the timer (or an explicit resume) ends.
+
+#### Scenario: Hand-carried watch stays suspended in carry mode
+- **WHEN** the wearer starts a carry suspension and transports the
+  watch in hand (motion + real pulse from the palm)
+- **THEN** monitoring stays suspended until the timer expires or the
+  wearer resumes explicitly

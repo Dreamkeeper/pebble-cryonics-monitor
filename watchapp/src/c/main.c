@@ -35,7 +35,8 @@ static char s_detail_buf[64];
  * guard and the periodic status poll must not wipe or dismiss it. */
 static bool s_nag_hold;
 
-static const char *HINTS_TEXT = "SELECT check-in\nUP suspend  DOWN hold SOS";
+static const char *HINTS_TEXT =
+    "SELECT check-in\nUP suspend (hold: carry)\nDOWN hold SOS";
 
 static Window *s_alert_window;
 static TextLayer *s_alert_title;
@@ -477,23 +478,33 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
 
 /* ---------- suspension menu ---------- */
 
-static void suspend_minutes(uint16_t minutes) {
+static void suspend_minutes(uint16_t minutes, bool auto_resume) {
   s_nag_hold = false;
   text_layer_set_text(s_detail_layer, HINTS_TEXT);
-  AppWorkerMessage m = {.data0 = minutes, .data1 = 1 /* auto-resume default on */};
+  AppWorkerMessage m = {.data0 = minutes, .data1 = auto_resume ? 1 : 0};
   app_worker_send_message(WMSG_SUSPEND, &m);
   /* label confirmed by the worker's SUSPEND_STARTED action + status polls */
-  snprintf(s_status_buf, sizeof(s_status_buf), "Suspended %u min", minutes);
+  snprintf(s_status_buf, sizeof(s_status_buf),
+           auto_resume ? "Suspended %u min" : "Carry %u min", minutes);
   text_layer_set_text(s_status_layer, s_status_buf);
 }
 
-/* TODO(M1): replace with a real MenuLayer incl. custom duration and
- * auto-resume toggle. Skeleton: UP cycles presets. */
+/* TODO(M1): replace with a real MenuLayer incl. custom duration.
+ * Skeleton: UP cycles presets. */
 static void up_click(ClickRecognizerRef ref, void *ctx) {
   static const uint16_t presets[] = {30, 60, 120};
   static int idx = 0;
-  suspend_minutes(presets[idx]);
+  suspend_minutes(presets[idx], true);
   idx = (idx + 1) % 3;
+}
+
+/* Carry mode: timer-only suspension for deliberate off-wrist transport.
+ * Holding the watch puts real skin on the optical sensor — a hand reads
+ * as a pulse just like a wrist does (field finding 2026-08-29), so
+ * auto-resume cannot be trusted while the watch is hand-carried. The
+ * wearer knows why they suspended; give them the timer-only choice. */
+static void up_long_click(ClickRecognizerRef ref, void *ctx) {
+  suspend_minutes(120, false);
 }
 
 static void select_click(ClickRecognizerRef ref, void *ctx) {
@@ -512,6 +523,7 @@ static void down_long_click(ClickRecognizerRef ref, void *ctx) {
 static void main_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_SELECT, select_click);
   window_single_click_subscribe(BUTTON_ID_UP, up_click);
+  window_long_click_subscribe(BUTTON_ID_UP, 700, up_long_click, NULL);
   window_long_click_subscribe(BUTTON_ID_DOWN, 700, down_long_click, NULL);
 }
 

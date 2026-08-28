@@ -169,6 +169,12 @@ static void drain_actions(void) {
         APP_LOG(APP_LOG_LEVEL_INFO, "NOTWORN nag -> launching app");
         notify_app(&a, true);
         break;
+      /* Pulse monitoring is blind while the wearer moves: the wearer must
+       * see the reboot/suspend guidance, so take the screen. */
+      case CM_ACT_SENSOR_FAULT:
+        APP_LOG(APP_LOG_LEVEL_INFO, "SENSOR fault -> launching app");
+        notify_app(&a, true);
+        break;
 
       /* Informational: never hijack the watchface for these. A
        * cancellation also invalidates any parked launch action — the

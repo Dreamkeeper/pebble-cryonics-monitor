@@ -86,6 +86,16 @@ static void sec_still_hr(uint16_t bpm) {
   drain();
 }
 
+/* one simulated second with movement AND a pulse reading */
+static void sec_moving_hr(uint16_t bpm) {
+  now_ms += 1000;
+  feed_batch(-1000);
+  feed_batch(-1300);
+  cm_hr_feed(&core, bpm, now_ms);
+  cm_tick(&core, now_ms, sim_hour);
+  drain();
+}
+
 static void mins_still(int minutes) { for (int i = 0; i < minutes * 60; i++) sec_still(); }
 static void secs_still(int seconds) { for (int i = 0; i < seconds; i++) sec_still(); }
 
@@ -484,8 +494,14 @@ static void test_suspension_blocks_and_autoresumes(void) {
   mins_still(20);
   CHECK(log_count == 0);
 
-  /* wearer puts it back on: sustained motion -> auto-resume */
-  for (int i = 0; i < 16; i++) sec_moving();
+  /* bag ride: motion alone must NOT resume — being carried off-wrist is
+   * a valid suspend state (owner decision 2026-08-29) */
+  for (int i = 0; i < 120; i++) sec_moving();
+  CHECK(count_type(CM_ACT_AUTO_RESUMED) == 0);
+  CHECK(cm_suspend_remaining_s(&core, now_ms) > 0);
+
+  /* back on the wrist: sustained motion + changing bpm -> auto-resume */
+  for (int i = 0; i < 20; i++) sec_moving_hr((uint16_t)(70 + (i & 1)));
   CHECK(count_type(CM_ACT_AUTO_RESUMED) == 1);
   CHECK(cm_suspend_remaining_s(&core, now_ms) == 0);
 }
@@ -507,8 +523,9 @@ static void test_suspension_expiry(void) {
   CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
 }
 
-/* Pulse is NOT a resume signal: the optical sensor phantom-reads when the
- * watch lies face-down or is pressed against a surface. */
+/* Resume needs BOTH halves: readings without motion never resume (the
+ * phantom-press case), and motion whose pulse evidence has gone stale
+ * never resumes either (the bag-ride case). */
 static void test_suspension_pulse_does_not_resume(void) {
   g_test = "suspension_pulse_does_not_resume";
   cm_config cfg = test_cfg();
@@ -524,8 +541,13 @@ static void test_suspension_pulse_does_not_resume(void) {
   CHECK(count_type(CM_ACT_AUTO_RESUMED) == 0);
   CHECK(cm_suspend_remaining_s(&core, now_ms) > 0);
 
-  /* sustained motion is the only trusted wear evidence */
-  for (int i = 0; i < 16; i++) sec_moving();
+  /* the phantom change ages past the fresh window; then motion alone */
+  mins_still(4);
+  for (int i = 0; i < 30; i++) sec_moving();
+  CHECK(count_type(CM_ACT_AUTO_RESUMED) == 0);
+
+  /* both together = wrist evidence */
+  for (int i = 0; i < 20; i++) sec_moving_hr((uint16_t)(70 + (i & 1)));
   CHECK(count_type(CM_ACT_AUTO_RESUMED) == 1);
 }
 
@@ -542,12 +564,57 @@ static void test_suspension_grace_blocks_instant_resume(void) {
   drain();
   log_reset();
 
-  for (int i = 0; i < 50; i++) sec_moving();  /* wearer walks off, watch on */
+  /* wearer walks off with the watch on (motion + live pulse) */
+  for (int i = 0; i < 50; i++) sec_moving_hr((uint16_t)(70 + (i & 1)));
   CHECK(count_type(CM_ACT_AUTO_RESUMED) == 0);
 
-  for (int i = 0; i < 30; i++) sec_moving();  /* grace over: 15 s run resumes */
+  /* grace over: 15 s worn run resumes */
+  for (int i = 0; i < 30; i++) sec_moving_hr((uint16_t)(70 + (i & 1)));
   CHECK(count_type(CM_ACT_AUTO_RESUMED) == 1);
   CHECK(cm_suspend_remaining_s(&core, now_ms) == 0);
+}
+
+/* Sensor died while worn (field 2026-08-29: the HRM failed to start on
+ * 2 of 3 consecutive boots): a moving wearer with a flat bpm gets the
+ * sensor-fault nag — not "Not worn?", never the ladder. */
+static void test_sensor_fault_fires_when_moving_without_pulse(void) {
+  g_test = "sensor_fault_fires_when_moving_without_pulse";
+  cm_config cfg = test_cfg();
+  cfg.sensor_fault_after_min = 4;
+  setup(&cfg);
+  warmup();
+
+  for (int i = 0; i < 3 * 60; i++) sec_moving();
+  CHECK(count_type(CM_ACT_SENSOR_FAULT) == 0); /* under threshold */
+
+  for (int i = 0; i < 2 * 60; i++) sec_moving();
+  CHECK(count_type(CM_ACT_SENSOR_FAULT) == 1);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 0);
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_ALARM) == 0);
+
+  /* once per episode: motion never re-arms it */
+  for (int i = 0; i < 5 * 60; i++) sec_moving();
+  CHECK(count_type(CM_ACT_SENSOR_FAULT) == 1);
+
+  /* a live pulse re-arms; a fresh flat episode fires again */
+  for (int i = 0; i < 30; i++) sec_moving_hr((uint16_t)(70 + (i & 1)));
+  for (int i = 0; i < 5 * 60; i++) sec_moving();
+  CHECK(count_type(CM_ACT_SENSOR_FAULT) == 2);
+}
+
+static void test_sensor_fault_holds_during_suspension(void) {
+  g_test = "sensor_fault_holds_during_suspension";
+  cm_config cfg = test_cfg();
+  cfg.sensor_fault_after_min = 4;
+  setup(&cfg);
+  warmup();
+
+  cm_suspend(&core, 3600, 0, now_ms);
+  drain();
+  log_reset();
+  for (int i = 0; i < 6 * 60; i++) sec_moving();
+  CHECK(count_type(CM_ACT_SENSOR_FAULT) == 0);
 }
 
 /* Removal signature: motion right after the last pulse, then stillness —
@@ -835,6 +902,8 @@ int main(void) {
   test_suspension_expiry();
   test_suspension_pulse_does_not_resume();
   test_suspension_grace_blocks_instant_resume();
+  test_sensor_fault_fires_when_moving_without_pulse();
+  test_sensor_fault_holds_during_suspension();
   test_charging_hold();
   test_charging_cancels_checkin_not_alarm();
   test_frozen_pulse_removal_nags();

@@ -54,6 +54,8 @@ typedef enum {
   CM_DET_CHECKIN,     /* scheduled check-in missed */
   CM_DET_NOTWORN,     /* watch appears off-wrist without suspension (nag only) */
   CM_DET_SOS,         /* manual SOS */
+  CM_DET_SENSOR,      /* no pulse signal while motion continues: sensor dead
+                         or watch carried off-wrist (nag only) */
   CM_DET_COUNT
 } cm_detector;
 
@@ -73,7 +75,9 @@ typedef enum {
   CM_ACT_LATENCY_DRILL,    /* M0 S1 test tooling: synthetic launch, no ladder.
                               Emitted by the worker shell, never by the core. */
   CM_ACT_CHARGING_STARTED, /* on charger = deliberate off-wrist: implicit hold */
-  CM_ACT_CHARGING_ENDED    /* unplugged: baselines reset, monitoring resumes */
+  CM_ACT_CHARGING_ENDED,   /* unplugged: baselines reset, monitoring resumes */
+  CM_ACT_SENSOR_FAULT      /* shell: "no pulse signal, motion continues" nag —
+                              sensor dead or carried off-wrist; never contacts */
 } cm_action_type;
 
 typedef enum {
@@ -137,6 +141,10 @@ typedef struct {
   /* Not-worn (HR hardware only) */
   uint16_t notworn_after_min;     /* default 15 */
 
+  /* Sensor fault (HR hardware only): bpm unchanged this long while
+   * motion stays recent = sensor dead or carried off-wrist (nag) */
+  uint16_t sensor_fault_after_min; /* default 10 */
+
   /* Scheduled check-in */
   uint16_t checkin_interval_min;  /* default 240 (4 h) */
   uint16_t checkin_remind_min;    /* reminder this long before due (default 5) */
@@ -148,12 +156,15 @@ typedef struct {
   uint16_t countdown_impact_s;    /* faster fuse for impacts (default 20) */
   uint16_t countdown_sos_s;       /* mis-press protection for manual SOS (default 5) */
 
-  /* Suspension auto-resume (accelerometer only: the optical HR sensor
-   * phantom-reads when pressed against a surface, so pulse is not a
-   * trusted wear signal here) */
+  /* Suspension auto-resume: sustained motion AND (on HR hardware) a
+   * live pulse — a bpm CHANGE during this suspension. Motion alone is
+   * not wear-proof: a suspended watch carried in a bag moves, and
+   * being carried off-wrist is a valid suspend reason (2026-08-29). */
   uint16_t resume_motion_s;       /* consecutive seconds of motion (default 15) */
   uint16_t resume_grace_s;        /* signals ignored this long after the
                                      suspension starts (default 60) */
+  uint16_t resume_pulse_fresh_s;  /* bpm change no older than this when the
+                                     motion run completes (default 150) */
 
   /* Wear discrimination */
   uint16_t pulse_proof_min;       /* valid pulse within this = proof of life:
@@ -206,6 +217,9 @@ typedef struct {
 
   /* not-worn */
   uint8_t  notworn_nagged;
+
+  /* sensor fault (re-armed by a bpm change, never by motion) */
+  uint8_t  sensor_nagged;
 
   /* non-motion refire guard */
   uint8_t  nonmotion_armed;

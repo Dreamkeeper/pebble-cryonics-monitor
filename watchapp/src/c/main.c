@@ -303,6 +303,14 @@ static void handle_action(const cm_action *a) {
       text_layer_set_text(s_detail_layer, "Re-wear the watch,\nor UP to suspend");
       send_to_phone(PMSG_NOTWORN, a);
       break;
+    case CM_ACT_SENSOR_FAULT:
+      s_nag_hold = true;
+      vibes_double_pulse();
+      text_layer_set_text(s_status_layer, "No pulse signal");
+      text_layer_set_text(s_detail_layer,
+                          "Sensor dead, or carried\noff-wrist? Reboot the\nwatch, or UP to suspend");
+      send_to_phone(PMSG_SENSOR_FAULT, a);
+      break;
     case CM_ACT_CHECKIN_REMINDER:
       vibes_short_pulse();  /* TODO show "check-in due in N min" */
       break;

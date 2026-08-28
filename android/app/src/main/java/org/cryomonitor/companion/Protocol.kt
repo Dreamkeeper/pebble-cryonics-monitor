@@ -23,6 +23,9 @@ object Protocol {
                                        // HEARTBEAT_SEQ = watch arm->result ms
     const val PMSG_CHARGING = 13       // watch->phone: SECONDS 1=on charger
     const val PMSG_HR_LAB = 14         // phone->watch: SECONDS 1/0 lab on/off
+    const val PMSG_SENSOR_FAULT = 16   // watch->phone: no pulse signal while
+                                       // motion continues (sensor dead or
+                                       // carried off-wrist) — wearer-only
     const val PMSG_HR_SAMPLE = 15      // watch->phone: SECONDS=bpm,
                                        // HEARTBEAT_SEQ=event age s, DETECTOR=heap/64
 

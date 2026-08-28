@@ -415,7 +415,8 @@ class DebugActivity : AppCompatActivity() {
                 "link-faults=${soak.get(SoakStats.LINK_FAULTS)} " +
                 "self-heals=${soak.get(SoakStats.SELF_HEALS)}\n")
             append("worker: dl-records=${soak.get(SoakStats.DL_RECORDS)} " +
-                "faults=${soak.get(SoakStats.WORKER_FAULTS)}\n")
+                "faults=${soak.get(SoakStats.WORKER_FAULTS)} " +
+                "sensor-faults=${soak.get(SoakStats.SENSOR_FAULTS)}\n")
             append("alarms: pre=${soak.get(SoakStats.PREALARMS)} " +
                 "full=${soak.get(SoakStats.ALARMS)} " +
                 "server-fails=${soak.get(SoakStats.SERVER_FAILS)}\n")

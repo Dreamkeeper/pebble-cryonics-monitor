@@ -81,8 +81,11 @@ enum {
                              hold), 0 = unplugged (monitoring resumed) */
   PMSG_HR_LAB = 14,       /* phone->watch: SECONDS 1/0 — start/stop the S4
                              sensor lab (forwarded to the worker) */
-  PMSG_HR_SAMPLE = 15     /* watch->phone: SECONDS = raw bpm, HEARTBEAT_SEQ =
+  PMSG_HR_SAMPLE = 15,    /* watch->phone: SECONDS = raw bpm, HEARTBEAT_SEQ =
                              seconds since last HR event, DETECTOR = heap/64 */
+  PMSG_SENSOR_FAULT = 16  /* watch->phone: no pulse signal while motion
+                             continues — sensor dead or carried off-wrist
+                             (wearer-only FAULT, never contacts) */
 };
 
 /* S1 latency drill: the worker waits this long after the app closes before

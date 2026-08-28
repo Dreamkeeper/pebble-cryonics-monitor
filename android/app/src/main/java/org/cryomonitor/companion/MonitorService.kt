@@ -217,6 +217,15 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     "without a suspension — monitoring is blind. Re-wear the " +
                     "watch or suspend monitoring. Contacts are NOT alerted.")
             }
+            Protocol.PMSG_SENSOR_FAULT -> {
+                CmLog.w(TAG, "watch reports sensor fault (no pulse, motion continues)")
+                soak.inc(SoakStats.SENSOR_FAULTS)
+                notifyFault("Watch reports NO PULSE SIGNAL while it keeps " +
+                    "moving — the HR sensor may be dead, or the watch is " +
+                    "carried off-wrist. Reboot the watch, or suspend " +
+                    "monitoring if it is deliberately off. Contacts are " +
+                    "NOT alerted.")
+            }
         }
     }
 

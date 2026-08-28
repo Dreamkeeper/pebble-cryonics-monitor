@@ -55,6 +55,8 @@ void cm_config_defaults(cm_config *cfg) {
 
   cfg->notworn_after_min = 3;
 
+  cfg->sensor_fault_after_min = 10;
+
   cfg->checkin_interval_min = 240;
   cfg->checkin_remind_min = 5;
   cfg->checkin_grace_min = 15;
@@ -66,6 +68,7 @@ void cm_config_defaults(cm_config *cfg) {
 
   cfg->resume_motion_s = 15;
   cfg->resume_grace_s = 60;
+  cfg->resume_pulse_fresh_s = 150;
 
   cfg->pulse_proof_min = 5;
   cfg->removal_window_s = 45;
@@ -226,6 +229,7 @@ void cm_hr_feed(cm_core *c, uint16_t bpm, uint32_t now_ms) {
     c->last_bpm_change_ms = now_ms;
     c->pulse_snoozed = 0;
     c->notworn_nagged = 0;
+    c->sensor_nagged = 0;
     if (c->pulse_phase == 1) end_pulse_machinery(c);
     if (c->stage == CM_STAGE_CHECKIN && c->stage_det == CM_DET_PULSE) {
       cancel_alert(c, CM_CANCEL_PULSE);
@@ -259,6 +263,7 @@ static void tick_suspension(cm_core *c) {
     c->last_pulse_ms = c->now_ms;
     c->last_bpm_change_ms = c->now_ms;
     c->impact_phase = 0;
+    c->sensor_nagged = 0; /* post-suspension blindness is a new episode */
     emit(c, CM_ACT_SUSPEND_EXPIRED, 0, 0, 0);
     return;
   }
@@ -266,24 +271,42 @@ static void tick_suspension(cm_core *c) {
   if (c->suspend_auto_resume) {
     /* Arming delay: the wearer is usually still wearing (or handling) the
      * watch in the first moments of a suspension — those signals must not
-     * resume it. Pulse is deliberately NOT a resume signal at all: the
-     * optical sensor phantom-reads when pressed against a surface, so
-     * sustained motion is the only trusted "back on the wrist" evidence. */
+     * resume it. */
     if (elapsed(c->now_ms, c->suspend_start_ms) <
         (uint32_t)c->cfg.resume_grace_s * 1000u) {
       c->suspend_motion_run_s = 0;
       return;
     }
-    if (c->motion_this_second) c->suspend_motion_run_s++;
-    else c->suspend_motion_run_s = 0;
+    if (c->motion_this_second) {
+      if (c->suspend_motion_run_s < 60000) c->suspend_motion_run_s++;
+    } else c->suspend_motion_run_s = 0;
 
     if (c->suspend_motion_run_s >= c->cfg.resume_motion_s) {
-      c->suspended = 0;
-      c->last_motion_ms = c->now_ms;
-      c->last_pulse_ms = c->now_ms;
-    c->last_bpm_change_ms = c->now_ms;
-      c->impact_phase = 0;
-      emit(c, CM_ACT_AUTO_RESUMED, 0, 0, 0);
+      /* Motion alone is not wrist evidence on HR hardware: a suspended
+       * watch carried in a bag moves for minutes, and being carried
+       * off-wrist is a valid suspend reason (2026-08-29). Require a
+       * LIVE pulse too — a bpm CHANGE during this suspension (past the
+       * grace) and still fresh. Liveness is a changing value (S4): the
+       * off-wrist-fixed firmware reads 0 off-body and a frozen reading
+       * never changes, so a bag ride cannot fake this half. Readings
+       * without motion still never resume (the old phantom-press rule).
+       * If the sensor is dead, the suspend timer stays the backstop. */
+      int pulse_ok = 1;
+      if (c->cfg.hr_available) {
+        uint32_t armed_ms =
+            c->suspend_start_ms + (uint32_t)c->cfg.resume_grace_s * 1000u;
+        pulse_ok = (int32_t)(c->last_bpm_change_ms - armed_ms) >= 0 &&
+                   elapsed(c->now_ms, c->last_bpm_change_ms) <=
+                       (uint32_t)c->cfg.resume_pulse_fresh_s * 1000u;
+      }
+      if (pulse_ok) {
+        c->suspended = 0;
+        c->last_motion_ms = c->now_ms;
+        c->last_pulse_ms = c->now_ms;
+        c->last_bpm_change_ms = c->now_ms;
+        c->impact_phase = 0;
+        emit(c, CM_ACT_AUTO_RESUMED, 0, 0, 0);
+      }
     }
   }
 }
@@ -430,6 +453,28 @@ static void tick_notworn(cm_core *c) {
   }
 }
 
+/* "No pulse signal but motion continues": the moving-wearer twin of the
+ * not-worn nag. Either the HR sensor died while worn (field 2026-08-29:
+ * the HRM failed to start on 2 of 3 consecutive boots) or the watch is
+ * being carried off-wrist. Both mean pulse monitoring is blind; neither
+ * is an emergency, so this nags the wearer and faults the phone — never
+ * contacts. A still wearer never reaches here (the pulse hunt/ladder or
+ * the not-worn nag owns that episode); motion never re-arms this (it
+ * does not disprove a dead sensor) — only a bpm change does. */
+static void tick_sensorfault(cm_core *c) {
+  if (!c->cfg.enabled[CM_DET_SENSOR] || !c->cfg.hr_available) return;
+  if (c->sensor_nagged || c->stage != CM_STAGE_NONE) return;
+  if (c->pulse_phase != 0) return;
+
+  uint32_t flat_th = (uint32_t)c->cfg.sensor_fault_after_min * 60000u;
+  uint32_t motion_th = (uint32_t)c->cfg.notworn_after_min * 60000u;
+  if (elapsed(c->now_ms, c->last_bpm_change_ms) >= flat_th &&
+      elapsed(c->now_ms, c->last_motion_ms) < motion_th) {
+    c->sensor_nagged = 1;
+    emit(c, CM_ACT_SENSOR_FAULT, CM_DET_SENSOR, 0, 0);
+  }
+}
+
 void cm_tick(cm_core *c, uint32_t now_ms, uint8_t local_hour) {
   c->now_ms = now_ms;
   c->hour = local_hour;
@@ -442,6 +487,7 @@ void cm_tick(cm_core *c, uint32_t now_ms, uint8_t local_hour) {
     tick_nonmotion(c);
     tick_checkin(c);
     tick_notworn(c);
+    tick_sensorfault(c);
   }
   c->motion_this_second = 0;
 }
@@ -524,6 +570,7 @@ void cm_set_charging(cm_core *c, int charging, uint32_t now_ms) {
     c->last_bpm_change_ms = now_ms;
     c->impact_phase = 0;
     c->notworn_nagged = 0;
+    c->sensor_nagged = 0;
     c->nonmotion_armed = 1;
     emit(c, CM_ACT_CHARGING_ENDED, 0, 0, 0);
   }
@@ -550,6 +597,7 @@ void cm_set_lab_hold(cm_core *c, int hold, uint32_t now_ms) {
     c->last_bpm_change_ms = now_ms;
     c->impact_phase = 0;
     c->notworn_nagged = 0;
+    c->sensor_nagged = 0;
     c->nonmotion_armed = 1;
   }
 }
@@ -562,6 +610,7 @@ void cm_resume(cm_core *c, uint32_t now_ms) {
   c->last_pulse_ms = now_ms;
   c->last_bpm_change_ms = now_ms;
   c->impact_phase = 0;
+  c->sensor_nagged = 0;
   emit(c, CM_ACT_AUTO_RESUMED, 0, 0, 0);
 }
 

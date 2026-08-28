@@ -64,6 +64,7 @@ class SoakStats(context: Context) {
         const val DOWNTIME_S = "downtime_s"
         const val DL_RECORDS = "dl_records"
         const val WORKER_FAULTS = "worker_faults"
+        const val SENSOR_FAULTS = "sensor_faults"
         const val LINK_FAULTS = "link_faults"
         const val SELF_HEALS = "self_heals"
         const val PREALARMS = "prealarms"

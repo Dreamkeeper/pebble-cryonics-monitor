@@ -31,6 +31,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     private lateinit var settings: SettingsStore
     private lateinit var server: ServerClient
     private lateinit var escalator: Escalator
+    private lateinit var soak: SoakStats
 
     @Volatile private var lastWatchDataT = 0L
     @Volatile private var watchBattery: Int? = null
@@ -56,6 +57,8 @@ class MonitorService : Service(), PebbleTransport.Listener {
         super.onCreate()
         settings = SettingsStore(this)
         CmLog.init(this)
+        soak = SoakStats(this)
+        soak.noteServiceStart()
         server = ServerClient(settings)
         escalator = Escalator(this, settings)
         CmLog.i(TAG, "service starting, server=${settings.serverUrl.isNotEmpty()}")
@@ -145,11 +148,13 @@ class MonitorService : Service(), PebbleTransport.Listener {
             Protocol.PMSG_PRE_ALARM -> {
                 val det = detectorName(data)
                 CmLog.i(TAG, "PRE-ALARM from watch: $det")
+                soak.inc(SoakStats.PREALARMS)
                 showAlarmUi(det, preAlarm = true)
             }
             Protocol.PMSG_ALARM -> {
                 val det = detectorName(data)
                 CmLog.i(TAG, "ALARM from watch: $det")
+                soak.inc(SoakStats.ALARMS)
                 startSiren()
                 showAlarmUi(det, preAlarm = false)
                 scope.launch { escalate(det) }
@@ -239,6 +244,8 @@ class MonitorService : Service(), PebbleTransport.Listener {
             // brief provider flaps (workout start, state churn) must not
             // put the watchapp on the wearer's screen.
             val downFor = System.currentTimeMillis() - watchDownSince
+            soak.set(SoakStats.LAST_RECONNECT_AT, System.currentTimeMillis())
+            if (watchDownSince > 0) soak.add(SoakStats.DOWNTIME_S, downFor / 1000)
             if (watchDownSince > 0 && downFor >= 10_000) {
                 selfHealLaunch("watch reconnected after ${downFor / 1000}s")
             } else {
@@ -247,6 +254,8 @@ class MonitorService : Service(), PebbleTransport.Listener {
             }
         } else if (!connected && was) {
             watchDownSince = System.currentTimeMillis()
+            soak.inc(SoakStats.DISCONNECTS)
+            soak.set(SoakStats.LAST_DISCONNECT_AT, watchDownSince)
             CmLog.w(TAG, "watch connection LOST")
         }
         updateNotification()
@@ -274,6 +283,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 return@launch
             }
             CmLog.i(TAG, "self-heal ($reason): relaunching watchapp/worker")
+            soak.inc(SoakStats.SELF_HEALS)
             watchLink.startWatchapp()
         }
     }
@@ -384,6 +394,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
             if (!watchConnected && lastWatchDataT > 0 &&
                 silentFor > Protocol.WATCH_SILENT_AFTER_S && !faultNotified) {
                 faultNotified = true
+                soak.inc(SoakStats.LINK_FAULTS)
                 CmLog.w(TAG, "watch watchdog: link down, silent ${silentFor}s")
                 notifyFault("Watch link lost — check Bluetooth and the " +
                     "watch battery. Monitoring on the watch continues, but " +
@@ -397,6 +408,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 workerSilent > Protocol.WORKER_SILENT_AFTER_S &&
                 !workerFaultNotified) {
                 workerFaultNotified = true
+                soak.inc(SoakStats.WORKER_FAULTS)
                 CmLog.w(TAG, "worker heartbeats stopped (${workerSilent}s) — evicted?")
                 notifyFault("The watch background worker stopped reporting " +
                     "(possibly evicted by another background app). " +
@@ -478,6 +490,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     // the notification for the next five minutes.
                     failures++
                     delayMs = 60_000L
+                    soak.inc(SoakStats.SERVER_FAILS)
                     CmLog.w(TAG, "server heartbeat failed x$failures " +
                         "(${server.lastResult})")
                     if (failures >= 2 && serverReachable) {
@@ -537,6 +550,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 // battery, and the server's watch_data_age become honest.
                 workerLastRecT = System.currentTimeMillis()
                 lastWatchDataT = workerLastRecT
+                soak.inc(SoakStats.DL_RECORDS)
                 intent.getIntExtra("battery", -1)
                     .takeIf { it in 0..100 }?.let { noteWatchBattery(it) }
                 // Records carry the worker's own state: sync display truth

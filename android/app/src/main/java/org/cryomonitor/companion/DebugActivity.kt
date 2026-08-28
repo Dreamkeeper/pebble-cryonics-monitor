@@ -76,6 +76,19 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var s5Line: TextView
     private lateinit var s6Line: TextView
 
+    // ---- soak & recovery (spec: companion-resilience) ----
+    private lateinit var soak: SoakStats
+    private lateinit var soakCard: TextView
+    private lateinit var rebootLine: TextView
+    private lateinit var outageLine: TextView
+    private lateinit var outageBtn: Button
+
+    private enum class OutageState { IDLE, WAIT_DISCONNECT, OFF_HOLD, WAIT_RECONNECT }
+    private var outageState = OutageState.IDLE
+    private var outageArmT = 0L
+    private var outagePowerOnT = 0L
+    private var outageDetectS = -1L
+
     private val sampleReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
             intent ?: return
@@ -89,6 +102,7 @@ class DebugActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = SettingsStore(this)
+        soak = SoakStats(this)
 
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -211,9 +225,207 @@ class DebugActivity : AppCompatActivity() {
                 "round trip and records the result per phone model."
         })
 
+        header("Soak & recovery")
+        col.addView(TextView(this).apply {
+            caption()
+            text = "Counters since reset — the evidence base for the 7-day " +
+                "soak protocol (docs/SOAK-TEST.md). Alarms here are the " +
+                "false-alarm ledger unless a real event happened."
+        })
+        soakCard = TextView(this).apply { dataCard() }
+        col.addView(soakCard, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = Ui.dp(this@DebugActivity, 4)
+                bottomMargin = Ui.dp(this@DebugActivity, 8) })
+        col.addView(Button(this).apply {
+            text = "Share soak report"
+            setOnClickListener {
+                startActivity(Intent.createChooser(
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, "cryomonitor-soak")
+                        putExtra(Intent.EXTRA_TEXT, renderSoak())
+                    }, "Share soak report"))
+            }
+        })
+        col.addView(Button(this).apply {
+            text = "Reset soak counters"
+            setOnClickListener { soak.reset(); refreshPassiveCards() }
+        })
+
+        col.addView(TextView(this).apply {
+            caption()
+            setPadding(0, Ui.dp(context, 16), 0, 0)
+            text = "Phone-reboot drill: arm, reboot the phone, then come " +
+                "back here — the verdict is automatic. On HyperOS the app " +
+                "needs the Autostart permission (Security app) or boot " +
+                "recovery is blocked by the OS."
+        })
+        rebootLine = TextView(this).apply { caption() }
+        col.addView(rebootLine)
+        col.addView(Button(this).apply {
+            text = "Arm reboot drill"
+            setOnClickListener {
+                soak.set(SoakStats.REBOOT_ARMED_AT, System.currentTimeMillis())
+                Toast.makeText(this@DebugActivity,
+                    "Armed. Reboot the phone now; check back after boot.",
+                    Toast.LENGTH_LONG).show()
+                refreshPassiveCards()
+            }
+        })
+        col.addView(Button(this).apply {
+            text = "Open Autostart settings (HyperOS)"
+            setOnClickListener {
+                val ok = runCatching {
+                    startActivity(Intent().setClassName(
+                        "com.miui.securitycenter",
+                        "com.miui.permcenter.autostart.AutoStartManagementActivity"))
+                }.isSuccess
+                if (!ok) Toast.makeText(this@DebugActivity,
+                    "Not a HyperOS device? Open Security → Autostart manually.",
+                    Toast.LENGTH_LONG).show()
+            }
+        })
+
+        col.addView(TextView(this).apply {
+            caption()
+            setPadding(0, Ui.dp(context, 16), 0, 0)
+            text = "Watch-outage drill: measures how fast a dead watch is " +
+                "noticed and how fast the link returns after power-on."
+        })
+        outageLine = TextView(this).apply { caption() }
+        col.addView(outageLine)
+        outageBtn = Button(this).apply {
+            text = "Start watch-outage drill"
+            setOnClickListener { onOutageButton() }
+        }
+        col.addView(outageBtn)
+
         val root = ScrollView(this).apply { addView(col) }
         Ui.applySystemInsets(root)
         setContentView(root)
+    }
+
+    // ---- watch-outage drill state machine ----
+
+    private fun onOutageButton() {
+        when (outageState) {
+            OutageState.IDLE -> {
+                outageState = OutageState.WAIT_DISCONNECT
+                outageArmT = System.currentTimeMillis()
+                outageDetectS = -1
+                outageBtn.text = "Abort outage drill"
+                Toast.makeText(this, "Power the watch OFF now (hold the " +
+                    "back button → Shut Down).", Toast.LENGTH_LONG).show()
+            }
+            OutageState.OFF_HOLD -> {
+                outageState = OutageState.WAIT_RECONNECT
+                outagePowerOnT = System.currentTimeMillis()
+                outageBtn.text = "Abort outage drill"
+            }
+            else -> { // abort from either waiting state
+                outageState = OutageState.IDLE
+                outageBtn.text = "Start watch-outage drill"
+            }
+        }
+        refreshPassiveCards()
+    }
+
+    /** Runs from the 1 s ticker: advances the outage drill on link events
+     *  recorded by MonitorService, and renders both drill lines. */
+    private fun refreshRecovery() {
+        when (outageState) {
+            OutageState.WAIT_DISCONNECT -> {
+                val disc = soak.get(SoakStats.LAST_DISCONNECT_AT)
+                if (disc > outageArmT) {
+                    outageDetectS = (disc - outageArmT) / 1000
+                    outageState = OutageState.OFF_HOLD
+                    outageBtn.text = "WATCH IS POWERING ON NOW"
+                    buzz()
+                } else outageLine.text = "Waiting for the disconnect… " +
+                    "(${(System.currentTimeMillis() - outageArmT) / 1000}s " +
+                    "since arm — power the watch off)"
+            }
+            OutageState.OFF_HOLD -> {
+                val offFor = (System.currentTimeMillis() - outageArmT) / 1000
+                outageLine.text = "Disconnect detected in ${outageDetectS}s. " +
+                    "Leave the watch OFF ≥5 min (${offFor / 60}m elapsed), " +
+                    "then power it on and press the button."
+            }
+            OutageState.WAIT_RECONNECT -> {
+                val rec = soak.get(SoakStats.LAST_RECONNECT_AT)
+                if (rec > outagePowerOnT) {
+                    val reconnectS = (rec - outagePowerOnT) / 1000
+                    soak.set(SoakStats.OUTAGE_AT, System.currentTimeMillis())
+                    soak.set(SoakStats.OUTAGE_DETECT_S, outageDetectS)
+                    soak.set(SoakStats.OUTAGE_RECONNECT_S, reconnectS)
+                    outageState = OutageState.IDLE
+                    outageBtn.text = "Start watch-outage drill"
+                    buzz(); buzz()
+                } else outageLine.text = "Waiting for the link to return… " +
+                    "(${(System.currentTimeMillis() - outagePowerOnT) / 1000}s " +
+                    "since power-on)"
+            }
+            OutageState.IDLE -> {
+                outageLine.text = if (soak.get(SoakStats.OUTAGE_AT) == 0L)
+                    "Not run yet."
+                else "Last run: disconnect detected in " +
+                    "${soak.get(SoakStats.OUTAGE_DETECT_S)}s · power-on → " +
+                    "link up in ${soak.get(SoakStats.OUTAGE_RECONNECT_S)}s " +
+                    "(includes watch boot)"
+            }
+        }
+
+        rebootLine.text = when (val v = RebootDrill.verdict(
+            soak.get(SoakStats.REBOOT_ARMED_AT),
+            System.currentTimeMillis(),
+            android.os.SystemClock.elapsedRealtime(),
+            soak.get(SoakStats.RECEIVER_FIRED_AT),
+            soak.get(SoakStats.BOOT_RECOVERY_AT),
+            soak.get(SoakStats.BOOT_RECOVERY_DELAY_S))) {
+            RebootDrill.Verdict.NotArmed -> "Not armed."
+            RebootDrill.Verdict.WaitingForReboot ->
+                "ARMED — reboot the phone now, then come back here."
+            is RebootDrill.Verdict.Pass ->
+                "PASS — monitoring was back ${v.bootToServiceS}s after boot, " +
+                "no user action."
+            RebootDrill.Verdict.FailServiceStart ->
+                "FAIL — boot receiver ran but the service did not start " +
+                "(check the logs)."
+            RebootDrill.Verdict.FailAutostart ->
+                "FAIL — the boot broadcast never arrived: enable Autostart " +
+                "for this app (Security app), then re-arm."
+        }
+    }
+
+    private fun renderSoak(): String {
+        val resetAt = soak.get(SoakStats.RESET_AT)
+        val days = if (resetAt == 0L) 0.0
+                   else (System.currentTimeMillis() - resetAt) / 86_400_000.0
+        return buildString {
+            append("# cryomonitor soak ${Date()} (${Build.MODEL})\n")
+            append("window: ${"%.1f".format(days)} days since " +
+                "${if (resetAt == 0L) "-" else Date(resetAt).toString()}\n")
+            append("service starts: boot=${soak.get(SoakStats.STARTS_BOOT)} " +
+                "update=${soak.get(SoakStats.STARTS_UPDATE)} " +
+                "other=${soak.get(SoakStats.STARTS_OTHER)}\n")
+            append("watch link: disconnects=${soak.get(SoakStats.DISCONNECTS)} " +
+                "downtime=${soak.get(SoakStats.DOWNTIME_S) / 60}m " +
+                "link-faults=${soak.get(SoakStats.LINK_FAULTS)} " +
+                "self-heals=${soak.get(SoakStats.SELF_HEALS)}\n")
+            append("worker: dl-records=${soak.get(SoakStats.DL_RECORDS)} " +
+                "faults=${soak.get(SoakStats.WORKER_FAULTS)}\n")
+            append("alarms: pre=${soak.get(SoakStats.PREALARMS)} " +
+                "full=${soak.get(SoakStats.ALARMS)} " +
+                "server-fails=${soak.get(SoakStats.SERVER_FAILS)}\n")
+            if (soak.get(SoakStats.OUTAGE_AT) > 0)
+                append("outage drill: detect=${soak.get(SoakStats.OUTAGE_DETECT_S)}s " +
+                    "reconnect=${soak.get(SoakStats.OUTAGE_RECONNECT_S)}s\n")
+            if (soak.get(SoakStats.BOOT_RECOVERY_AT) > 0)
+                append("last boot recovery: " +
+                    "${soak.get(SoakStats.BOOT_RECOVERY_DELAY_S)}s after boot\n")
+        }
     }
 
     override fun onResume() {
@@ -447,6 +659,10 @@ class DebugActivity : AppCompatActivity() {
     // ---- passive cards ----
 
     private fun refreshPassiveCards() {
+        soakCard.text = renderSoak().lines()
+            .filter { it.isNotBlank() && !it.startsWith("#") }
+            .joinToString("\n")
+        refreshRecovery()
         s5Line.text = if (MonitorService.s5RecordCount == 0)
             "No worker DataLogging records yet. Keep the watchapp CLOSED " +
             "and wear the watch ≥1 h. No records after that = the Core app " +

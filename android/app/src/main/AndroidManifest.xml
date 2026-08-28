@@ -10,6 +10,7 @@
     <!-- Fallback FGS type if BLUETOOTH_CONNECT is not (yet) granted -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -76,6 +77,19 @@
                 <action android:name="io.rebble.pebblekit2.RECEIVE_DATA_FROM_WATCH" />
             </intent-filter>
         </service>
+
+        <!-- Reboot/update recovery: monitoring must not stay dead until
+             the wearer notices. Protected system broadcasts — only the
+             system can send them. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Worker DataLogging heartbeats (M0 S5): legacy PebbleKit
              broadcast protocol; PebbleKit2 has no DataLogging API. -->

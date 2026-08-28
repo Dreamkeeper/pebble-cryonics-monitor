@@ -1,4 +1,9 @@
-# Upstream PRs — pending owner approval to open
+# Upstream PRs — OPENED 2026-08-28
+
+> - Firmware: https://github.com/coredevices/PebbleOS/pull/1960
+>   (commit `4ee6a7b`, DCO-signed dkvasnikov@gmail.com)
+> - Core app: https://github.com/coredevices/mobileapp/pull/386
+>   (commit `0ca21985`; CLA check green)
 
 > 2026-08-28: both branches revised per the independent Codex review
 > ([UPSTREAM-PR-REVIEW-FINDINGS.md](UPSTREAM-PR-REVIEW-FINDINGS.md));

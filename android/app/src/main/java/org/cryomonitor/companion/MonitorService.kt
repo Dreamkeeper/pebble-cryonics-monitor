@@ -265,8 +265,17 @@ class MonitorService : Service(), PebbleTransport.Listener {
             return
         }
         lastSelfHealT = now
-        CmLog.i(TAG, "self-heal ($reason): relaunching watchapp/worker")
-        watchLink.startWatchapp()
+        scope.launch {
+            // Never launch over an app the wearer is actively using —
+            // ours would close it (one foreground app on Pebble).
+            if (watchLink.foreignAppActive()) {
+                CmLog.i(TAG, "self-heal ($reason) skipped: another watchapp " +
+                    "is on the wearer's screen; retrying later")
+                return@launch
+            }
+            CmLog.i(TAG, "self-heal ($reason): relaunching watchapp/worker")
+            watchLink.startWatchapp()
+        }
     }
 
     private fun detectorName(data: Map<Int, Any>): String {

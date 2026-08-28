@@ -6,6 +6,10 @@ import io.rebble.pebblekit2.client.DefaultPebbleSender
 import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
 import io.rebble.pebblekit2.common.model.TransmissionResult
 import io.rebble.pebblekit2.common.model.WatchIdentifier
+import io.rebble.pebblekit2.model.ConnectedWatch
+import io.rebble.pebblekit2.model.Watchapp
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -36,6 +40,24 @@ class WatchLink(
     private val classic = PebbleTransport(context, uuid, listener)
     private val pk2Sender = DefaultPebbleSender(context)
     private val pk2Info = DefaultPebbleInfoRetriever(context)
+    @Volatile private var lastWatch: ConnectedWatch? = null
+
+    /**
+     * True when a NON-watchface app that is not ours is on the watch
+     * screen. Launching our watchapp would close it (one foreground app
+     * on Pebble) and kill its phone-side JS — field finding 2026-08-28:
+     * our self-heal launches were breaking GymTracker mid-workout.
+     */
+    suspend fun foreignAppActive(): Boolean {
+        val watch = lastWatch ?: return false
+        return runCatching {
+            withTimeoutOrNull(2_000) {
+                val app = pk2Info.getActiveApp(watch.id).first()
+                app != null && app.type != Watchapp.Type.WATCHFACE &&
+                    app.id.toString() != Protocol.WATCHAPP_UUID
+            }
+        }.getOrNull() ?: false
+    }
 
     fun start() {
         classic.start()
@@ -54,6 +76,7 @@ class WatchLink(
             runCatching {
                 pk2Info.getConnectedWatches().collect { watches ->
                     CmLog.i(TAG, "pk2: connected watches = ${watches.size}")
+                    lastWatch = watches.firstOrNull() ?: lastWatch
                     pendingDown?.cancel()
                     if (watches.isNotEmpty()) {
                         listener.onConnectionChanged(true)

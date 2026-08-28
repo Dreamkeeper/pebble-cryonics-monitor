@@ -15,6 +15,9 @@
 - [x] 5. `docs/SOAK-TEST.md` — 7-day protocol, PASS gates, daily
        checklist; HyperOS Autostart setup note.
 - [x] 6. Version bump 0.5.0 (29); build signed release APK to `dist/`.
-- [ ] 7. Hardware verification by owner: reboot drill PASS on the
-       Xiaomi 17 Ultra (HyperOS Autostart on), watch-outage drill
-       reports sane latencies, counters tick over a day of wear.
+- [x] 7. Hardware verification by owner (2026-08-28): reboot drill
+       PASS on the Xiaomi 17 Ultra — service back 96 s after boot,
+       update-path start also observed (update=1); watch-outage drill
+       detect 9 s / link-up 5 s; counters live (160 DL records,
+       0 false alarms in the first window). v0.5.1 fixes reset()
+       wiping drill verdicts.

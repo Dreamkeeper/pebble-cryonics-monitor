@@ -41,9 +41,18 @@ class SoakStats(context: Context) {
         } else inc(STARTS_OTHER)
     }
 
+    /** Clears the counters but keeps drill verdicts: the protocol runs
+     *  the drills FIRST, then resets for a clean soak window — the PASS
+     *  evidence must survive into the week's report. */
     fun reset() {
-        p.edit().clear().apply()
-        set(RESET_AT, System.currentTimeMillis())
+        val keep = listOf(RECEIVER_FIRED_AT, RECEIVER_WAS_BOOT,
+            BOOT_RECOVERY_AT, BOOT_RECOVERY_DELAY_S, REBOOT_ARMED_AT,
+            OUTAGE_AT, OUTAGE_DETECT_S, OUTAGE_RECONNECT_S)
+            .associateWith { get(it) }
+        val e = p.edit().clear()
+        keep.forEach { (k, v) -> if (v != 0L) e.putLong(k, v) }
+        e.putLong(RESET_AT, System.currentTimeMillis())
+        e.apply()
     }
 
     companion object {

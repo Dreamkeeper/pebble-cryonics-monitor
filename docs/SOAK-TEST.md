@@ -15,13 +15,16 @@ recovery). The wearer's cost is ~2 minutes a day.
    Monitor (Debug has a shortcut button). Also Settings → Battery →
    No restrictions for the app. Without Autostart, boot recovery is
    blocked by the OS.
-3. Debug → **Reset soak counters** (clean window).
-4. Run the two recovery drills once:
+3. Run the two recovery drills once:
    - **Reboot drill:** arm, reboot the phone, unlock it, wait 2 min
      without opening the app, then open Debug → expect PASS with the
-     boot→service delay.
+     boot→service delay. (Verified 2026-08-28: PASS, 96 s.)
    - **Watch-outage drill:** start, power the watch off, wait 5 min,
      power on, confirm → expect sane detect/reconnect times.
+     (Verified 2026-08-28: detect 9 s, link-up 5 s.)
+4. Debug → **Reset soak counters** — AFTER the drills, since the
+   drills themselves rack up disconnects/downtime/self-heals. The
+   drill verdicts survive the reset window note in the report.
 5. Fire one **test alarm** (Contacts screen) and confirm every
    responder actually received it. Schedule one of these near your
    normal bedtime once during the week — the "does it wake a human

@@ -7,6 +7,8 @@ import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
 import io.rebble.pebblekit2.common.model.TransmissionResult
 import io.rebble.pebblekit2.common.model.WatchIdentifier
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -42,11 +44,25 @@ class WatchLink(
         // streams the connected-watch list. Without this, a powered-off
         // watch kept showing "watch ✓" — PK2 app-open events only ever
         // reported *connected*, never gone (E2E field finding 2026-08-18).
+        // Disconnects are DEBOUNCED: the provider can flicker empty for a
+        // moment during watch state churn (field finding 2026-08-28 —
+        // starting a workout produced a phantom disconnect+reconnect,
+        // whose self-heal put our watchapp on the wearer's screen).
+        // Connects report instantly; a disconnect must persist 5 s.
         scope.launch {
+            var pendingDown: Job? = null
             runCatching {
                 pk2Info.getConnectedWatches().collect { watches ->
                     CmLog.i(TAG, "pk2: connected watches = ${watches.size}")
-                    listener.onConnectionChanged(watches.isNotEmpty())
+                    pendingDown?.cancel()
+                    if (watches.isNotEmpty()) {
+                        listener.onConnectionChanged(true)
+                    } else {
+                        pendingDown = scope.launch {
+                            delay(5_000)
+                            listener.onConnectionChanged(false)
+                        }
+                    }
                 }
             }.onFailure {
                 CmLog.w(TAG, "pk2 watch-state flow unavailable ($it) — " +

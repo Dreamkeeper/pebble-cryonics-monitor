@@ -38,6 +38,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     @Volatile private var chargingHold = false  // watch on charger = paused
     @Volatile private var workerLastRecT = 0L   // last DataLogging record (arrival)
     @Volatile private var lastSelfHealT = 0L    // throttle watchapp relaunches
+    @Volatile private var watchDownSince = 0L   // when the link last dropped
     @Volatile private var labActive = false     // S4 lab in progress
     private val dataLogReceiver = DataLogReceiver()
     @Volatile private var workerFaultNotified = false
@@ -234,10 +235,18 @@ class MonitorService : Service(), PebbleTransport.Listener {
         watchConnected = connected
         if (connected && !was) {
             // Reconnect (or reboot) self-heal: relaunch the watchapp so the
-            // worker restarts on fresh code; the auto-launch guard hands
-            // the screen back to the watchface within seconds.
-            selfHealLaunch("watch reconnected")
+            // worker restarts on fresh code. Only after a REAL outage —
+            // brief provider flaps (workout start, state churn) must not
+            // put the watchapp on the wearer's screen.
+            val downFor = System.currentTimeMillis() - watchDownSince
+            if (watchDownSince > 0 && downFor >= 10_000) {
+                selfHealLaunch("watch reconnected after ${downFor / 1000}s")
+            } else {
+                CmLog.i(TAG, "watch reconnected after ${downFor / 1000}s — " +
+                    "flap, no relaunch")
+            }
         } else if (!connected && was) {
+            watchDownSince = System.currentTimeMillis()
             CmLog.w(TAG, "watch connection LOST")
         }
         updateNotification()

@@ -5,7 +5,7 @@ Date: 2026-08-28. Findings document:
 Both fork branches were revised and force-pushed:
 
 - PebbleOS `raw-hr-offwrist-invalidate` → commit `569fe0d`
-- mobileapp `companion-datalogging` → commit `5765ef71`
+- mobileapp `companion-datalogging` → commit `f574d446`
 
 Verdict on the review itself: high quality. Both blockers were real
 (1.1 verified against the source and the existing test input; 2.1/2.2
@@ -31,7 +31,7 @@ it flagged were real).
 | 2.4 | Unrestricted implicit broadcasts (privacy + Android 8+ manifest receivers) | **Deferred with rationale.** Matches the in-repo `PebbleKitClassic` AppMessage behavior — restricting only the new path would be inconsistent. Package targeting needs the PBW/locker companion-package metadata plumbing, which the maintainers are better placed to shape. Called out explicitly in the PR text as a proposed follow-up, offering to implement `intent.setPackage()` if they want it in this PR. |
 | 2.5 | `dataId++` unsafe across connections/restarts | **Fixed.** `AtomicInteger` seeded from the clock (`epoch-seconds & 0x3FFFFFFF`) so restarts don't replay ids and concurrent watch connections can't race. |
 | 2.6 | Malformed/partial records silently discarded | **Fixed (logging).** `itemSize <= 0` sessions are rejected with a warning at open; unknown-session data and non-multiple payloads log warnings with watch/session metadata; only the partial tail is dropped. Returning a delivery result pre-ACK was not adopted — it contradicts the declared best-effort scope (2.3). |
-| 2.7 | No automated tests | **Partially fixed.** Host tests cover little-endian decoding (1/2/4-byte) and per-type payload mapping (uint→long, int→int with sign, bytes pass-through). Intent-extra assembly is a thin untested shim: `android.content.Intent`/`Base64` are unmocked stubs in the plain host-test environment (no Robolectric in libpebble3), so the typed logic was extracted into a pure `encodeItem()` the Intent builder consumes. Concurrency/receiver-absence tests would need instrumented tests — noted, not blocking a best-effort bridge. |
+| 2.7 | No automated tests | **Fixed (all host-testable behavior).** The Android bridge was split into a platform-independent `ClassicDataloggingSessions` (session map, payload splitting, item encoding, emitting sealed `Broadcast` values) and a thin Intent transport. 13 host tests cover: little-endian decoding (1/2/4-byte), per-type payload mapping (uint→long, int→int with sign, bytes pass-through), multi-item splitting, partial-tail drop with full items still delivered, per-session UUID + retained watch timestamp stability, new UUID on session reopen, close→FINISH with metadata then session forgotten, unknown-session drop, zero-item-size rejection, cross-watch session-id isolation, and data-id uniqueness/ordering. Not host-testable (would need instrumented tests): exact Intent extras (`Intent`/`Base64` are unmocked stubs without Robolectric — kept as a thin shim), package-restricted broadcasts (deferred per 2.4), and receiver-absence behavior (best-effort per 2.3). |
 | 2.8 | Guava incompatibility comment outdated | **Fixed — reviewer right about the docs, and our code was already correct.** PebbleKit 2.6 moved to `long`; our `long` extras match modern receivers. The stale warning is removed from the source comment and the PR draft. |
 | 2.9 | JVM no-op-binding claim doesn't match diff | **Fixed.** The two stray unused imports are removed; the JVM module (whose body is `TODO()` upstream) is now untouched by the diff, and the PR text says so. |
 

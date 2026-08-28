@@ -5,7 +5,8 @@
 > triage record in
 > [UPSTREAM-PR-REVIEW-TRIAGE.md](UPSTREAM-PR-REVIEW-TRIAGE.md).
 > Firmware fork commit: `569fe0d` (full upstream test suite green).
-> Mobileapp fork commit: `5765ef71` (compile + host tests green).
+> Mobileapp fork commit: `f574d446` (compile + 13 host tests green;
+> session logic extracted to a testable platform-independent class).
 
 ## PR 2: coredevices/PebbleOS — frozen raw HR off-wrist (S4 root cause)
 
@@ -102,8 +103,12 @@ registered companion receiver over 10+ minutes.
   clock-seeded `AtomicInteger` so concurrent watches and process
   restarts don't repeat ids. Payloads that aren't a multiple of the
   item size log a warning and drop only the partial tail.
-- Host tests cover the little-endian item decoding and the per-type
-  payload mapping.
+- The Android bridge is split into a platform-independent session/
+  encoding half (`ClassicDataloggingSessions`) and a thin intent
+  transport; 13 host tests cover item decoding/encoding, multi-item
+  and partial-tail splitting, session metadata stability, per-session
+  UUIDs, close/finish, unknown-session and zero-item-size handling,
+  cross-watch isolation, and data-id uniqueness.
 - iOS binds a no-op; the JVM platform module is still TODO upstream
   and is untouched.
 

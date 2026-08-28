@@ -59,6 +59,10 @@ static uint8_t s_phone_grace_ticks;
 
 static void ensure_worker_running(void);
 static uint16_t s_dbg_status_d1; /* bpm|heap from the last WMSG_STATUS */
+/* Debug telemetry gets its own mid-screen layer so the button hints stay
+ * visible (owner request: keep the tooltips even in debug mode). */
+static TextLayer *s_diag_layer;
+static char s_diag_buf[64];
 
 static uint32_t app_now_ms(void) {
   time_t s; uint16_t ms;
@@ -398,9 +402,8 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
     }
   } else if (type == WMSG_DIAG) {
     /* Field-debug view: the exact ages and flags the not-worn and
-     * pulse gates run on. Arrives right after WMSG_STATUS in debug
-     * mode, so this render wins the detail line. */
-    if (s_debug && !s_lab_hold) {
+     * pulse gates run on — on its own layer, hints stay visible. */
+    if (s_debug && !s_lab_hold && s_diag_layer) {
       char f[8]; int n = 0;
       if (m->data2 & CM_DIAG_CHARGING)   f[n++] = 'C';
       if (m->data2 & CM_DIAG_LAB_HOLD)   f[n++] = 'L';
@@ -409,12 +412,13 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
       if (m->data2 & CM_DIAG_EVER_PULSE) f[n++] = 'P';
       if (m->data2 & CM_DIAG_SUSPENDED)  f[n++] = 'S';
       f[n] = 0;
-      snprintf(s_detail_buf, sizeof(s_detail_buf),
+      snprintf(s_diag_buf, sizeof(s_diag_buf),
                "bpm %u · hp %uB · %s\nch %us · mo %us",
                (unsigned)(s_dbg_status_d1 & 0xFF),
                (unsigned)((s_dbg_status_d1 >> 8) * 64u),
                f[0] ? f : "-", (unsigned)m->data0, (unsigned)m->data1);
-      text_layer_set_text(s_detail_layer, s_detail_buf);
+      text_layer_set_text(s_diag_layer, s_diag_buf);
+      layer_set_hidden(text_layer_get_layer(s_diag_layer), false);
     }
   } else if (type == WMSG_STATUS) {
     uint16_t stage = m->data0 & 0xFFu;      /* high byte = charging hold */
@@ -521,6 +525,15 @@ static void main_window_load(Window *w) {
   text_layer_set_text(s_status_layer, "Monitoring");
   layer_add_child(root, text_layer_get_layer(s_status_layer));
 
+  s_diag_layer = text_layer_create(
+      GRect(0, STATUS_BAR_LAYER_HEIGHT + 78, b.size.w, 44));
+  text_layer_set_font(s_diag_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+  text_layer_set_text_alignment(s_diag_layer, GTextAlignmentCenter);
+  text_layer_set_background_color(s_diag_layer, GColorClear);
+  text_layer_set_text_color(s_diag_layer, fg);
+  layer_set_hidden(text_layer_get_layer(s_diag_layer), true);
+  layer_add_child(root, text_layer_get_layer(s_diag_layer));
+
   s_detail_layer = text_layer_create(GRect(0, b.size.h - 62, b.size.w, 58));
   text_layer_set_font(s_detail_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
   text_layer_set_text_alignment(s_detail_layer, GTextAlignmentCenter);
@@ -533,6 +546,8 @@ static void main_window_load(Window *w) {
 static void main_window_unload(Window *w) {
   status_bar_layer_destroy(s_status_bar);
   text_layer_destroy(s_status_layer);
+  text_layer_destroy(s_diag_layer);
+  s_diag_layer = NULL;
   text_layer_destroy(s_detail_layer);
 }
 

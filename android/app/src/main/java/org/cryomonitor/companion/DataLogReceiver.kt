@@ -89,6 +89,7 @@ class DataLogReceiver : BroadcastReceiver() {
             "batt=$battery% bpm=$bpm susp=$suspended flush-latency=${flushS}s$diag")
         // The monitor runs as a foreground service, so this both delivers
         // to a live service and revives a dead one.
+        val flags = if (bytes.size == 14) bytes[12].toInt() and 0xFF else -1
         runCatching {
             context.startForegroundService(
                 Intent(context, MonitorService::class.java)
@@ -96,6 +97,7 @@ class DataLogReceiver : BroadcastReceiver() {
                     .putExtra("battery", battery)
                     .putExtra("stage", stage)
                     .putExtra("suspended", suspended)
+                    .putExtra("flags", flags)
                     .putExtra("flush_s", flushS))
         }.onFailure { CmLog.w(TAG, "could not deliver worker heartbeat: $it") }
     }

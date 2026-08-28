@@ -181,11 +181,16 @@ static void drain_actions(void) {
         break;
       /* Resume clears the persisted suspension — without this a worker
        * restart would silently re-suspend until the original expiry. */
+      /* Resume/expiry must reach the PHONE, and the app is its only
+       * mouthpiece: launch it briefly (field bug: phone showed
+       * SUSPENDED 20m long after auto-resume because the closed app
+       * never relayed PMSG_SUSPENDED=0). The wearer also gets the
+       * double-pulse feedback; the guard returns the watchface. */
       case CM_ACT_SUSPEND_EXPIRED:
       case CM_ACT_AUTO_RESUMED:
         persist_delete(PK_SUSPEND_UNTIL);
         persist_delete(PK_SUSPEND_AUTORESUME);
-        notify_app(&a, false);
+        notify_app(&a, true);
         break;
       /* Dock/undock are deliberate wearer acts: launch the app briefly so
        * the wearer sees "Charging"/"Monitoring" AND the phone learns the

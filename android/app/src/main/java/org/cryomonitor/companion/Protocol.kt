@@ -34,6 +34,9 @@ object Protocol {
     const val WATCH_HEARTBEAT_INTERVAL_S = 60
     const val WATCH_SILENT_AFTER_S = 300
     // Worker DataLogging records: fault after this much silence while the
-    // link is up (only armed once records have ever arrived).
-    const val WORKER_SILENT_AFTER_S = 600
+    // link is up (only armed once records have ever arrived). Hardware
+    // measurement 2026-08-28: the watch spools records in ~4 min batches
+    // (median flush 236 s, gaps to ~11 min observed) — the threshold must
+    // clear the batching, not the logging cadence.
+    const val WORKER_SILENT_AFTER_S = 1500
 }

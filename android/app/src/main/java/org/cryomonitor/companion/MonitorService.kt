@@ -539,6 +539,13 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 lastWatchDataT = workerLastRecT
                 intent.getIntExtra("battery", -1)
                     .takeIf { it in 0..100 }?.let { noteWatchBattery(it) }
+                // Records carry the worker's own state: sync display truth
+                // that AppMessage can miss while the watchapp is closed
+                // (field bug: SUSPENDED 20m shown long after auto-resume).
+                if (intent.getIntExtra("suspended", -1) == 0) suspendedUntilT = 0
+                intent.getIntExtra("flags", -1).takeIf { it >= 0 }?.let {
+                    chargingHold = (it and 0x01) != 0
+                }
                 val flushS = intent.getLongExtra("flush_s", -1)
                 if (flushS >= 0) {
                     synchronized(dlFlushLatencies) {

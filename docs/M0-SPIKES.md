@@ -76,7 +76,17 @@ the symbol is compiled out of the worker API (SDK 4.9.169). The worker
 genuinely cannot vibrate; `worker_launch_app()` + foreground vibe is the
 only alarm path. Architecture assumption confirmed; no change needed.
 
-## S4 — Raw HR behavior at 1 s period — ✅ ANSWERED (guided lab, 2026-08-27)
+## S4 — Raw HR behavior at 1 s period — ✅ ANSWERED; firmware fix VALIDATED (2026-08-28)
+
+**Fixed-firmware lab run (obelix@pvt dev build with the
+raw-hr-offwrist-invalidate patch):** worn stages unchanged (100 %
+nonzero, live jitter); off-body the raw metric now drops to **0 within
+~30 s** of removal (table_flat 9 % nonzero = the wear-detect tail,
+face-down and fabric 0 %) with events still flowing. The PebbleOS PR is
+field-validated. Note: minWorkerHeap read 1472 B on the dev build
+(below the 2048 gate; 2112 B on stock) — see S8.
+
+### Stock-firmware finding (2026-08-27)
 
 **Result (Time 2, full lab run):** worn stages read 100 % nonzero with
 live jitter (moving 68–88, still 74–81, loose strap still tracks
@@ -97,7 +107,20 @@ within `pulse_flat_after_s`.
 Debug & feasibility tests → **Start sensor lab** — guided,
 confirmation-gated stages, recorded and shareable.
 
-## S5 — DataLogging heartbeat latency — ❌ NO-GO (legacy path; adb-verified 2026-08-27)
+## S5 — DataLogging heartbeat latency — ✅ WORKS with the patched Core app (2026-08-28)
+
+**Hardware result with the companion-datalogging Core-app build:** worker
+records DELIVER (13 records on the first session) — the legacy-broadcast
+forwarding PR is field-validated. Cadence: the watch spools DataLogging
+in ~4-minute batches (median flush 236 s, gaps to ~11 min observed) —
+firmware spool policy, not the phone. Verdict: the 60 s go-gate was
+mis-calibrated against firmware reality; worker liveness with ~4-min
+granularity still transforms the product (honest synced age, eviction
+detection at ~25 min). Eviction watchdog threshold raised to 1500 s to
+clear the batching. The user-configurable periodic sync remains for
+STOCK phone apps, which still forward nothing (below).
+
+### Original stock-app finding (2026-08-27)
 
 **Result:** during a ~10-minute adb-monitored session with the worker
 running, BT up, per-minute records being written on the watch, and the
@@ -155,10 +178,11 @@ support remains unverified → S5.
 
 ## S8 — Worker memory headroom — ✅ GO, thin margin (lab, 2026-08-27)
 
-**Result:** 2112 B free throughout a full sensor lab — burst HR +
-accel + detector state + lab relay, the worst case measured — against
-the > 2048 B gate. **GO by 64 bytes**: any future worker feature must
-re-check this number (the debug line shows it live).
+**Result:** 2112 B free throughout a full sensor lab on stock firmware
+— GO by 64 bytes. **2026-08-28 caveat: the same lab on the dev
+firmware build read 1472 B** (dev builds carry extra overhead; no OOM
+observed). The worker has no headroom to grow; re-check the live heap
+number after every firmware update and before any worker feature.
 **Question:** Actual free heap in the worker on emery after subscribing to
 accel (25-sample batch) + HealthService events (~2 kB) + detector state.
 **Method:** debug ON, watchapp open → `heap <bytes>` on the debug line

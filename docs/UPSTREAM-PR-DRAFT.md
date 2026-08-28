@@ -29,8 +29,12 @@ root-cause walkthrough (driver → validity check → never-invalidated
 metric), the fix, note that CI builds validate and we can field-test a
 dev build on real Time 2 hardware, AI-assistance disclosure, and the
 suggestion that PBL-40784 (their TODO about off-wrist special-casing)
-relates. Not compiled locally (no arm toolchain here) — CI is expected
-to build it; flagged honestly in the body.
+relates. Compiled locally (obelix@pvt, full build green) AND field-validated
+2026-08-28 on a retail Time 2 via the supported sideload flow: off-body
+the raw metric drops to 0 within ~30 s (previously frozen at the last
+on-wrist value indefinitely); worn readings unchanged; a full guided
+sensor-lab run (450+ samples across 6 wear conditions) confirms both
+halves. Data available on request.
 
 Side effect to note for reviewers: after this fix, our own
 change-based liveness detection continues to work unchanged (0 is
@@ -92,10 +96,13 @@ already ACKs these sessions, this just stops discarding the payloads.
 
 ## Testing
 
-- [ ] Field-tested on Pebble Time 2 + Android 15 (HyperOS) with a
-      GPL-3.0 companion app whose worker logs a 14-byte record every
-      60 s (https://github.com/Dreamkeeper/pebble-cryonics-monitor) —
-      to be checked off with a local build before opening the PR.
+- [x] Field-tested 2026-08-28 on Pebble Time 2 + Android 15 (HyperOS)
+      with a GPL-3.0 companion whose worker logs a 14-byte record every
+      60 s (https://github.com/Dreamkeeper/pebble-cryonics-monitor):
+      records DELIVER through this build's forwarding — 13 records in
+      the first session, median flush 236 s (the watch spools in ~4 min
+      batches; firmware policy). Zero records with the stock app on the
+      identical setup.
 
 ## Disclosure
 

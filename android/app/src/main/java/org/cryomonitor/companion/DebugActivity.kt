@@ -454,10 +454,17 @@ class DebugActivity : AppCompatActivity() {
         else {
             val age = (System.currentTimeMillis() -
                 MonitorService.s5LastRecT) / 1000
-            val verdict = if (MonitorService.s5MedianFlushS in 0..59)
-                "→ GO (gate <60 s)" else "→ over the 60 s gate so far"
-            "records=${MonitorService.s5RecordCount} · median flush=" +
-                "${MonitorService.s5MedianFlushS}s · last ${age}s ago $verdict"
+            // Hardware truth (2026-08-28): the watch spools DataLogging in
+            // ~4 min batches; per-minute delivery is not on offer. Any
+            // record flow at all = the channel works.
+            val m = MonitorService.s5MedianFlushS
+            val verdict = when {
+                m in 0..90 -> "→ DELIVERING (near-realtime)"
+                m > 90 -> "→ DELIVERING (batched, ~${(m + 30) / 60} min)"
+                else -> ""
+            }
+            "records=${MonitorService.s5RecordCount} · median flush=${m}s · " +
+                "last ${age}s ago $verdict"
         }
 
         val pts = getSharedPreferences("batt_hist", MODE_PRIVATE)

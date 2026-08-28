@@ -1,5 +1,12 @@
 # Upstream PRs — pending owner approval to open
 
+> 2026-08-28: both branches revised per the independent Codex review
+> ([UPSTREAM-PR-REVIEW-FINDINGS.md](UPSTREAM-PR-REVIEW-FINDINGS.md));
+> triage record in
+> [UPSTREAM-PR-REVIEW-TRIAGE.md](UPSTREAM-PR-REVIEW-TRIAGE.md).
+> Firmware fork commit: `569fe0d` (full upstream test suite green).
+> Mobileapp fork commit: `5765ef71` (compile + host tests green).
+
 ## PR 2: coredevices/PebbleOS — frozen raw HR off-wrist (S4 root cause)
 
 Branch: `raw-hr-offwrist-invalidate` on Dreamkeeper/PebbleOS (fork).
@@ -22,6 +29,14 @@ locking/write patterns.
 
 **PR title:** activity: invalidate raw HR metric when the HRM reports
 off-wrist
+
+**Review revision (569fe0d):** off-wrist is now excluded from
+`valid_hr_reading` (else-if structure), so a nonzero-bpm/OffWrist
+event can no longer overwrite the invalidation — the reviewer found
+the existing test suite feeds exactly that input. Regression
+assertions added to `test_activity.c` covering bpm=120/OffWrist,
+bpm=0/OffWrist, and on-wrist recovery of the stored raw metric. Full
+upstream test suite passes (12,565 tasks).
 
 **PR body sketch:** problem (measured 9+ min of bit-identical stale
 bpm with fresh events on a Time 2; field data + graph available),
@@ -69,30 +84,52 @@ registered companion receiver over 10+ minutes.
 
 ## Change
 
-- `CompanionDatalogging` interface in commonMain; `Datalogging`
-  forwards non-health, non-system items to it.
+- `CompanionDatalogging` interface in commonMain with a session
+  lifecycle (`onSessionOpened` / `onDataItems` / `onSessionClosed`),
+  keyed by watch serial + session id since session ids are
+  connection-local. `DataLoggingService` now passes through the
+  watch-provided session timestamp and declared item type (previously
+  parsed but discarded); `Datalogging` forwards non-health,
+  non-system sessions.
 - Android implementation (`PebbleKitClassicDatalogging`) emits the
   classic PebbleKit `com.getpebble.action.dl.RECEIVE_DATA` ordered
   broadcast per item — same delivery style as the existing
-  `PebbleKitClassic` AppMessage compatibility.
-- iOS/JVM bind a no-op.
+  `PebbleKitClassic` AppMessage compatibility — with a random log
+  UUID generated once per session, the real watch timestamp, and the
+  item encoded per its declared type (byte-array → Base64 string
+  extra, uint → `long` extra, int → `int` extra).
+  `FINISH_SESSION` is emitted on close. Data ids come from a
+  clock-seeded `AtomicInteger` so concurrent watches and process
+  restarts don't repeat ids. Payloads that aren't a multiple of the
+  item size log a warning and drop only the partial tail.
+- Host tests cover the little-endian item decoding and the per-type
+  payload mapping.
+- iOS binds a no-op; the JVM platform module is still TODO upstream
+  and is untouched.
 
-~60 lines plus DI wiring. No protocol or storage changes; the phone
-already ACKs these sessions, this just stops discarding the payloads.
+No protocol or storage changes; the phone already ACKs these
+sessions, this just stops discarding the payloads.
 
 ## Compatibility notes (deliberate trade-offs, happy to adjust)
 
-- Timestamp/tag ride as `long` extras. Receivers built against the
-  original PebbleKit jar cast those extras to Guava `UnsignedInteger`
-  and will silently skip the records (their current behavior anyway,
-  since nothing is delivered today); receivers parsing primitives get
-  everything. Shipping Guava just for two extras seemed wrong — say
-  the word if you'd rather have exact legacy parity.
-- Fire-and-forget: `ACK_DATA` from companions is ignored and
-  `REQUEST_DATA` is not needed (items are forwarded as they arrive;
-  nothing is buffered phone-side). A delivery-guaranteed path would
-  belong in PebbleKit2 as a proper API — this PR is the minimal bridge
-  until then.
+- Timestamp/tag/data extras use the primitive types (`long`/`int`)
+  that PebbleKit ≥ 2.6 receivers expect (2.6 replaced Guava
+  `UnsignedInteger` with `long` in the DataLogging API).
+- **Best-effort by design** (documented on the interface): items are
+  forwarded as they arrive, nothing is buffered phone-side, and
+  companion `ACK_DATA` is not consumed — if no receiver is running,
+  a record is dropped even though the watch was ACKed. A
+  delivery-guaranteed path would belong in PebbleKit2 as a proper
+  API; this PR is the minimal bridge until then.
+- Broadcasts are currently unrestricted implicit broadcasts, matching
+  the in-repo `PebbleKitClassic` AppMessage behavior. Two known
+  consequences, flagged for maintainers as a follow-up: any installed
+  app can listen for third-party log data, and manifest-declared
+  receivers on Android 8+ won't wake for them (runtime-registered
+  receivers work, which a worker-based companion needs anyway).
+  Targeting the companion package (`intent.setPackage`) from
+  PBW/locker metadata would fix both; happy to do it here or in a
+  follow-up, whichever you prefer.
 
 ## Testing
 

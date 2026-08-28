@@ -19,9 +19,12 @@ enum {
   PK_DRILL_ARM_MS = 8,    /* wall-clock ms when the worker was armed; lets the
                              phone subtract ALL watch-side time (arm->result)
                              instead of guessing the countdown duration */
-  PK_BUILD_ID = 9         /* hash of the app build: a running worker survives
+  PK_BUILD_ID = 9,        /* hash of the app build: a running worker survives
                              a sideload executing the OLD binary — the app
                              kills and relaunches it when the build changes */
+  PK_PENDING_ACTION_T = 10 /* epoch seconds the pending action was parked:
+                              the app discards stale parked actions instead
+                              of replaying yesterday's nag after a reboot */
 };
 
 /* AppWorkerMessage types (uint8). data0/data1/data2 per type. */

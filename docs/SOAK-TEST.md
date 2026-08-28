@@ -71,3 +71,16 @@ recovery). The wearer's cost is ~2 minutes a day.
 Failing a gate = file the context (Soak report + log ring share),
 fix, reset counters, restart the week. A clean week closes the soak
 and is the release evidence for "runs unattended".
+
+## Known issues under observation
+
+- **HRM fails to start on some boots (firmware).** 2026-08-28/29: the
+  sensor produced no readings after 2 of 3 consecutive power-ons (no
+  LED, bpm 0, change age growing from boot); the third boot recovered
+  it in ~30 s. Watch-side symptom on a failed boot: a legitimate
+  "Not worn?" nag ~3 min after boot if the arm is still. If this
+  recurs during the soak, note boot time + whether HR ever started —
+  that's a PebbleOS bug report (flaky gh3x2x init), possibly worth an
+  upstream issue alongside PR #1960.
+- Fixed in watchapp 0.4.7: a parked nag/alarm could survive a reboot
+  and replay onto the fresh boot (stale pending-action replay).

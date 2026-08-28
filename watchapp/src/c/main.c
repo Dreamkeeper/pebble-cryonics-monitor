@@ -369,10 +369,18 @@ static void handle_action(const cm_action *a) {
 static void pickup_pending_action(void) {
   if (!persist_exists(PK_PENDING_ACTION)) return;
   cm_action a;
-  if (persist_read_data(PK_PENDING_ACTION, &a, sizeof(a)) == sizeof(a)) {
-    persist_delete(PK_PENDING_ACTION);
-    handle_action(&a);
-  }
+  int32_t ok = persist_read_data(PK_PENDING_ACTION, &a, sizeof(a)) == sizeof(a);
+  /* Parked actions expire: an app launch that arrives long after the
+   * worker parked the action (relaunch race, reboot in between) must
+   * not replay a stale alert (field bug 2026-08-29: yesterday's
+   * "Not worn?" nag delivered onto a fresh boot). */
+  time_t parked = persist_exists(PK_PENDING_ACTION_T)
+      ? (time_t)persist_read_int(PK_PENDING_ACTION_T) : 0;
+  persist_delete(PK_PENDING_ACTION);
+  persist_delete(PK_PENDING_ACTION_T);
+  if (!ok) return;
+  if (parked == 0 || time(NULL) - parked > 60) return; /* stale: drop */
+  handle_action(&a);
 }
 
 /* ---------- worker messages (while app is open) ---------- */
@@ -383,6 +391,7 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
                    .detector = (uint8_t)m->data1,
                    .seconds = m->data2};
     persist_delete(PK_PENDING_ACTION); /* we got it live */
+    persist_delete(PK_PENDING_ACTION_T);
     handle_action(&a);
   } else if (type == WMSG_HR_SAMPLE) {
     /* Relay the lab sample to the phone and mirror it on the watch. */

@@ -129,6 +129,7 @@ static void notify_app(const cm_action *a, bool launch) {
   app_worker_send_message(WMSG_ACTION, &m); /* no-op if app not running */
   if (!launch) return;
   persist_write_data(PK_PENDING_ACTION, a, sizeof(*a));
+  persist_write_int(PK_PENDING_ACTION_T, (int32_t)time(NULL));
   worker_launch_app();
 }
 
@@ -174,6 +175,7 @@ static void drain_actions(void) {
        * racing app launch must find nothing rather than a stale alert. */
       case CM_ACT_ALERT_CANCELLED:
         persist_delete(PK_PENDING_ACTION);
+        persist_delete(PK_PENDING_ACTION_T);
         notify_app(&a, false);
         break;
       case CM_ACT_SUSPEND_STARTED:
@@ -397,6 +399,13 @@ static void restore_suspension(void) {
 }
 
 static void init(void) {
+  /* A parked launch action must not outlive the worker session that
+   * emitted it: after a reboot the detector state it came from is void,
+   * and replaying it delivers yesterday's nag onto a fresh boot (field
+   * bug 2026-08-29). The timestamp check in the app covers the
+   * launch-in-flight race; this covers everything else. */
+  persist_delete(PK_PENDING_ACTION);
+  persist_delete(PK_PENDING_ACTION_T);
   cm_config cfg;
   load_config(&cfg);
   cm_init(&s_core, &cfg, now_ms());

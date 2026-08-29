@@ -74,6 +74,16 @@ and is the release evidence for "runs unattended".
 
 ## Known issues under observation
 
+- **Xiaomi Second Space = monitoring blind window (owner, 2026-08-29).**
+  Switching to Second Space freezes main-space apps: the companion
+  service pauses, watch alarms cannot reach the phone, and server
+  heartbeats stop — long visits will trigger the server's
+  phone_silent ADVISORY to responders. During the soak: note Second
+  Space visits in the log; expected footprint is server-fails ticks
+  and heartbeat gaps on the dashboard trail. If visits are frequent,
+  the fix is wiring the server's offline-windows API to a one-tap
+  "quiet window" (backlog).
+
 - **HRM fails to start on some boots (firmware).** 2026-08-28/29: the
   sensor produced no readings after 2 of 3 consecutive power-ons (no
   LED, bpm 0, change age growing from boot); the third boot recovered

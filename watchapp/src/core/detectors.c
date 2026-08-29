@@ -14,6 +14,12 @@ static void emit(cm_core *c, uint8_t type, uint8_t det, uint8_t reason, uint16_t
   c->q[idx].detector = det;
   c->q[idx].reason = reason;
   c->q[idx].seconds = seconds;
+  /* Ladder actions carry the episode identity; everything else is
+   * informational and carries 0 (delivery hardening, 2026-08-29). */
+  c->q[idx].episode =
+      (type == CM_ACT_CHECKIN_START || type == CM_ACT_COUNTDOWN_START ||
+       type == CM_ACT_ALARM || type == CM_ACT_ALERT_CANCELLED)
+          ? c->episode : 0;
   c->q_len++;
 }
 
@@ -132,7 +138,18 @@ static void cancel_alert(cm_core *c, uint8_t reason) {
   }
 }
 
+/* A new episode begins whenever the ladder leaves NONE; a promotion
+ * (CHECKIN -> COUNTDOWN -> ALARM) keeps its episode. Ids are a
+ * shell-persisted sequence so they stay unique across restarts; 0 is
+ * reserved for none/legacy. */
+static void mint_episode(cm_core *c) {
+  if (c->stage != CM_STAGE_NONE) return;
+  if (++c->episode_seq == 0) c->episode_seq = 1;
+  c->episode = c->episode_seq;
+}
+
 static void start_checkin_stage(cm_core *c, uint8_t det) {
+  mint_episode(c);
   c->stage = CM_STAGE_CHECKIN;
   c->stage_det = det;
   c->stage_start_ms = c->now_ms;
@@ -146,6 +163,7 @@ static uint16_t countdown_len(const cm_core *c, uint8_t det) {
 }
 
 static void start_countdown_stage(cm_core *c, uint8_t det) {
+  mint_episode(c);
   c->stage = CM_STAGE_COUNTDOWN;
   c->stage_det = det;
   c->stage_start_ms = c->now_ms;
@@ -614,7 +632,24 @@ void cm_resume(cm_core *c, uint32_t now_ms) {
   emit(c, CM_ACT_AUTO_RESUMED, 0, 0, 0);
 }
 
+/* Re-sync the suspension deadline after a wall-clock correction: the
+ * shell owns wall-clock semantics; this just moves the mono deadline. */
+void cm_suspend_sync_remaining(cm_core *c, uint32_t remaining_s, uint32_t now_ms) {
+  if (!c->suspended) return;
+  c->now_ms = now_ms;
+  c->suspend_until_ms = now_ms + remaining_s * 1000u;
+}
+
 cm_stage cm_current_stage(const cm_core *c) { return (cm_stage)c->stage; }
+
+uint32_t cm_stage_remaining_s(const cm_core *c, uint32_t now_ms) {
+  uint32_t len_s;
+  if (c->stage == CM_STAGE_CHECKIN) len_s = c->cfg.checkin_ui_s;
+  else if (c->stage == CM_STAGE_COUNTDOWN) len_s = countdown_len(c, c->stage_det);
+  else return 0;
+  uint32_t el = elapsed(now_ms, c->stage_start_ms) / 1000u;
+  return el >= len_s ? 0 : len_s - el;
+}
 
 uint32_t cm_suspend_remaining_s(const cm_core *c, uint32_t now_ms) {
   if (!c->suspended) return 0;

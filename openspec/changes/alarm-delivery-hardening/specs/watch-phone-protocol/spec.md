@@ -32,11 +32,12 @@ fire-and-forget confirmed alarm is prohibited.
 
 ### Requirement: DataLogging is an authoritative alarm recovery channel
 Heartbeat record v3 SHALL carry stage, detector, and episode ID. When
-the companion receives a record reporting COUNTDOWN or ALARM for an
-episode it has not escalated, it SHALL run the full corresponding
-alarm path (pre-alarm UI for COUNTDOWN; siren + UI + server
-escalation for ALARM), deduplicated by episode. v2 (14-byte) records
-remain parseable with time-based recovery dedup.
+the companion receives a record reporting ALARM for an episode it has
+not escalated, it SHALL run the full alarm path (siren + UI + server
+escalation), deduplicated by episode. COUNTDOWN is never recovered
+from the spool — spooled records arrive minutes late and only the
+latched ALARM stage is never stale (owner decision 2026-08-29). v2
+(14-byte) records remain parseable with time-based recovery dedup.
 
 #### Scenario: Live channel lost entirely
 - **WHEN** the alarm AppMessage never arrives (app crashed, link out)

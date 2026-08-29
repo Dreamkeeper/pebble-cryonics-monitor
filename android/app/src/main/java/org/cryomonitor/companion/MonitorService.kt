@@ -156,7 +156,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 watchLink.send(mapOf(
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_SET_QMETRIC,
                     PebbleTransport.KEY_SECONDS to
-                        (if (settings.labQualityMetric) 1 else 0)))
+                        (if (qmetricEffective()) 1 else 0)))
                 if (labActive) watchLink.send(mapOf(
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_HR_LAB,
                     PebbleTransport.KEY_SECONDS to labModeValue()))
@@ -166,21 +166,37 @@ class MonitorService : Service(), PebbleTransport.Listener {
             }
             Protocol.PMSG_PRE_ALARM -> {
                 val det = detectorName(data)
-                CmLog.i(TAG, "PRE-ALARM from watch: $det")
-                soak.inc(SoakStats.PREALARMS)
-                showAlarmUi(det, preAlarm = true)
+                val ep = (data[PebbleTransport.KEY_EPISODE] as? Int) ?: 0
+                ackEpisode(ep)
+                CmLog.i(TAG, "PRE-ALARM from watch: $det (ep=$ep)")
+                // The watch retries until ACKed: refresh the UI only once
+                // per episode so a delayed ACK cannot strobe the phone.
+                if (ep == 0 || ep != lastPreAlarmEpisode) {
+                    lastPreAlarmEpisode = ep
+                    soak.inc(SoakStats.PREALARMS)
+                    showAlarmUi(det, preAlarm = true)
+                }
             }
             Protocol.PMSG_ALARM -> {
                 val det = detectorName(data)
-                CmLog.i(TAG, "ALARM from watch: $det")
-                soak.inc(SoakStats.ALARMS)
-                startSiren()
-                showAlarmUi(det, preAlarm = false)
-                scope.launch { escalate(det) }
+                val ep = (data[PebbleTransport.KEY_EPISODE] as? Int) ?: 0
+                ackEpisode(ep)
+                CmLog.i(TAG, "ALARM from watch: $det (ep=$ep)")
+                if (ep != 0 && episodeEscalated(ep)) {
+                    CmLog.i(TAG, "episode $ep already escalated — dedup")
+                } else {
+                    if (ep != 0) markEpisodeEscalated(ep)
+                    soak.inc(SoakStats.ALARMS)
+                    startSiren()
+                    showAlarmUi(det, preAlarm = false)
+                    scope.launch { escalate(det) }
+                }
             }
             Protocol.PMSG_CANCEL -> {
+                val ep = (data[PebbleTransport.KEY_EPISODE] as? Int) ?: 0
+                ackEpisode(ep)
                 CmLog.i(TAG, "watch cancelled alert (reason=" +
-                    "${data[PebbleTransport.KEY_CANCEL_REASON]})")
+                    "${data[PebbleTransport.KEY_CANCEL_REASON]}, ep=$ep)")
                 clearAlarmUi()
                 sendBroadcast(Intent(ACTION_ALERT_CANCELLED).setPackage(packageName))
                 scope.launch { retract("cancelled_on_watch") }
@@ -333,8 +349,31 @@ class MonitorService : Service(), PebbleTransport.Listener {
     }
 
     /** PMSG_HR_LAB SECONDS: 2 = lab + raw-quality peeks (diag firmware
-     *  only — stock asserts on the unknown metric), 1 = plain lab. */
-    private fun labModeValue(): Int = if (settings.labQualityMetric) 2 else 1
+     *  only — stock asserts on the unknown metric), 1 = plain lab.
+     *  Gated on the CONNECTED firmware being a dev build, not just the
+     *  switch — a stale flag after a downgrade must stay harmless
+     *  (review finding 7). */
+    private fun qmetricEffective(): Boolean =
+        settings.labQualityMetric && watchLink.firmwareIsDevBuild()
+
+    private fun labModeValue(): Int = if (qmetricEffective()) 2 else 1
+
+    // ---- episode dedup + ACK (delivery hardening D2/D3) ----
+
+    @Volatile private var lastPreAlarmEpisode = 0
+    @Volatile private var lastDlRecoveryT = 0L
+
+    private fun ackEpisode(ep: Int) {
+        watchLink.send(mapOf(
+            PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_ALARM_ACK,
+            PebbleTransport.KEY_SECONDS to ep))
+    }
+
+    private fun episodeEscalated(ep: Int) = ep in settings.escalatedEpisodes
+
+    private fun markEpisodeEscalated(ep: Int) {
+        settings.escalatedEpisodes = settings.escalatedEpisodes + ep
+    }
 
     private fun detectorName(data: Map<Int, Any>): String {
         val idx = data[PebbleTransport.KEY_DETECTOR] as? Int ?: return "unknown"
@@ -725,6 +764,30 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     CmLog.i(TAG, "worker heartbeats resumed")
                 }
                 workerProvisionFaulted = false // worker proof has now arrived
+                // Authoritative ALARM recovery from the spooled channel
+                // (hardening D3): a v3 record reporting a latched ALARM for
+                // an un-escalated episode runs the full alarm path — even
+                // if the live AppMessage never arrived. COUNTDOWN is never
+                // recovered from the spool (records arrive minutes late).
+                val recStage = intent.getIntExtra("stage", -1)
+                if (recStage == 3 /* CM_STAGE_ALARM */) {
+                    val recEp = intent.getIntExtra("episode", 0)
+                    val recDetIdx = intent.getIntExtra("detector", -1)
+                    val recDet = Protocol.DETECTOR_NAMES.getOrElse(recDetIdx) { "unknown" }
+                    val fresh = if (recEp != 0) !episodeEscalated(recEp)
+                        else System.currentTimeMillis() - lastDlRecoveryT > 600_000
+                    if (fresh) {
+                        if (recEp != 0) markEpisodeEscalated(recEp)
+                        lastDlRecoveryT = System.currentTimeMillis()
+                        CmLog.w(TAG, "ALARM recovered from DataLogging " +
+                            "record (ep=$recEp det=$recDet) — live channel " +
+                            "never delivered it")
+                        soak.inc(SoakStats.ALARMS)
+                        startSiren()
+                        showAlarmUi(recDet, preAlarm = false)
+                        scope.launch { escalate(recDet) }
+                    }
+                }
                 updateNotification()
             }
             ACTION_SET_DEBUG -> {
@@ -737,9 +800,11 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     PebbleTransport.KEY_SECONDS to (if (on) 1 else 0)))
             }
             ACTION_SET_QMETRIC -> {
-                val on = intent.getBooleanExtra("enabled", false)
+                val on = intent.getBooleanExtra("enabled", false) &&
+                    watchLink.firmwareIsDevBuild()
                 CmLog.i(TAG, "quality gate ${if (on) "ENABLED" else "disabled"} " +
-                    "(pushing to watch)")
+                    "(pushing to watch; firmware dev=" +
+                    "${watchLink.firmwareIsDevBuild()})")
                 watchLink.send(mapOf(
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_SET_QMETRIC,
                     PebbleTransport.KEY_SECONDS to (if (on) 1 else 0)))

@@ -1,7 +1,7 @@
 {
   "name": "cryonics-monitor",
   "author": "Pebble Cryonics Monitor contributors",
-  "version": "0.4.12",
+  "version": "0.5.0",
   "license": "GPL-3.0",
   "private": true,
   "keywords": ["pebble-app"],
@@ -32,7 +32,8 @@
       "WATCH_BATTERY": 7,
       "HR_BPM": 8,
       "SUSPEND_REMAINING_S": 9,
-      "CFG_BLOB": 10
+      "CFG_BLOB": 10,
+      "EPISODE": 11
     },
     "resources": {
       "media": []

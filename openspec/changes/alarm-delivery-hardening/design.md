@@ -50,10 +50,12 @@ u16 episode
   today's semantics (episode unknown → recovery falls back to
   "recover once per 10 min" time-dedup).
 - **Recovery rule** (MonitorService, on worker heartbeat): if
-  stage ∈ {COUNTDOWN, ALARM} and the episode is not in
-  `escalatedEpisodes` → run the full alarm path (siren + AlarmActivity
-  + server escalate) with the record's detector; mark the episode.
-  COUNTDOWN recovers as pre-alarm UI only; ALARM escalates.
+  stage == ALARM and the episode is not in `escalatedEpisodes` → run
+  the full alarm path (siren + AlarmActivity + server escalate) with
+  the record's detector; mark the episode. COUNTDOWN is NOT recovered
+  from the spool (owner decision 2026-08-29): records arrive minutes
+  late, by which time a countdown is resolved or became an ALARM —
+  only the latched, never-stale ALARM recovers from this channel.
 
 ## D4. Startup reconciliation + parked-action rules
 

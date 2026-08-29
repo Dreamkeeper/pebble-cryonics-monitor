@@ -603,6 +603,53 @@ static void test_sensor_fault_fires_when_moving_without_pulse(void) {
   CHECK(count_type(CM_ACT_SENSOR_FAULT) == 2);
 }
 
+/* Delivery hardening (2026-08-29): ladder episodes carry a durable id
+ * minted from a shell-persisted sequence; promotions keep it, cancel
+ * echoes it, informational actions carry 0. */
+static void test_episode_identity_and_carryover(void) {
+  g_test = "episode_identity_and_carryover";
+  cm_config cfg = test_cfg();
+  setup(&cfg);
+  warmup();
+  core.episode_seq = 41; /* shell seed from persist */
+
+  cm_manual_sos(&core, now_ms); drain();
+  const cm_action *cd = find_type(CM_ACT_COUNTDOWN_START);
+  CHECK(cd && cd->episode == 42);
+  secs_still(7); /* SOS fuse (5 s) -> ALARM, same episode */
+  const cm_action *al = find_type(CM_ACT_ALARM);
+  CHECK(al && al->episode == 42);
+  cm_user_ok(&core, now_ms); drain();
+  const cm_action *cx = find_type(CM_ACT_ALERT_CANCELLED);
+  CHECK(cx && cx->episode == 42);
+
+  log_reset();
+  cm_manual_sos(&core, now_ms); drain();
+  cd = find_type(CM_ACT_COUNTDOWN_START);
+  CHECK(cd && cd->episode == 43); /* new episode, new id */
+  cm_user_ok(&core, now_ms); drain();
+
+  log_reset();
+  cm_set_charging(&core, 1, now_ms); drain();
+  const cm_action *ch = find_type(CM_ACT_CHARGING_STARTED);
+  CHECK(ch && ch->episode == 0); /* informational: no episode */
+  cm_set_charging(&core, 0, now_ms); drain();
+}
+
+static void test_stage_remaining_seconds(void) {
+  g_test = "stage_remaining_seconds";
+  cm_config cfg = test_cfg();
+  setup(&cfg);
+  warmup();
+  CHECK(cm_stage_remaining_s(&core, now_ms) == 0); /* idle */
+  cm_manual_sos(&core, now_ms); drain();          /* SOS fuse 5 s */
+  CHECK(cm_stage_remaining_s(&core, now_ms) == 5);
+  secs_still(2);
+  CHECK(cm_stage_remaining_s(&core, now_ms) == 3);
+  cm_user_ok(&core, now_ms); drain();
+  CHECK(cm_stage_remaining_s(&core, now_ms) == 0);
+}
+
 static void test_sensor_fault_holds_during_suspension(void) {
   g_test = "sensor_fault_holds_during_suspension";
   cm_config cfg = test_cfg();
@@ -904,6 +951,8 @@ int main(void) {
   test_suspension_grace_blocks_instant_resume();
   test_sensor_fault_fires_when_moving_without_pulse();
   test_sensor_fault_holds_during_suspension();
+  test_episode_identity_and_carryover();
+  test_stage_remaining_seconds();
   test_charging_hold();
   test_charging_cancels_checkin_not_alarm();
   test_frozen_pulse_removal_nags();

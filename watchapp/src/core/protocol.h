@@ -25,8 +25,10 @@ enum {
   PK_PENDING_ACTION_T = 10, /* epoch seconds the pending action was parked:
                                the app discards stale parked actions instead
                                of replaying yesterday's nag after a reboot */
-  PK_QMETRIC = 11         /* 0/1: raw-quality metric available (diag fw) —
+  PK_QMETRIC = 11,        /* 0/1: raw-quality metric available (diag fw) —
                              worker gates liveness on quality >= Acceptable */
+  PK_EPISODE_SEQ = 12     /* last minted ladder episode id — persisted so
+                             episode identity survives worker restarts */
 };
 
 /* AppWorkerMessage types (uint8). data0/data1/data2 per type. */
@@ -37,7 +39,9 @@ enum {
   WMSG_RESUME = 4,        /* app->worker */
   WMSG_SOS = 5,           /* app->worker */
   WMSG_STATUS_REQ = 6,    /* app->worker: request status push */
-  WMSG_STATUS = 7,        /* worker->app: data0=stage, data1=last_bpm, data2=suspend_remaining_min */
+  WMSG_STATUS = 7,        /* worker->app v2: data0 = stage|det<<3|charging<<7
+                             |bpm<<8; data1 = episode; data2 = stage-secs or
+                             suspend-min (cap 255) | heap64<<8 */
   WMSG_SET_DEBUG = 8,     /* app->worker: data0 = 0/1 */
   WMSG_DRILL = 9,         /* app->worker: run the S1 latency drill — wait
                              CM_DRILL_DELAY_S, then fire a synthetic
@@ -62,8 +66,9 @@ enum {
 #define CM_DIAG_EVER_PULSE 0x10
 #define CM_DIAG_SUSPENDED  0x20
 
-/* DataLogging heartbeat: tag 0xC202 = the 14-byte v2 record (v1 was 8
- * bytes under 0xC201; the phone parses either by size). */
+/* DataLogging heartbeat: tag 0xC202, 16-byte v3 record (v2 was 14 bytes,
+ * v1 8 bytes under 0xC201; the phone parses all by size). v3 adds the
+ * episode id and packs detector into the stage byte high nibble. */
 #define CM_DL_TAG 0xC202
 
 /* MSG_TYPE values for AppMessage to/from the phone. */
@@ -89,11 +94,14 @@ enum {
   PMSG_SENSOR_FAULT = 16, /* watch->phone: no pulse signal while motion
                              continues — sensor dead or carried off-wrist
                              (wearer-only FAULT, never contacts) */
-  PMSG_SET_QMETRIC = 17   /* phone->watch: SECONDS 0/1 — the hr-quality-diag
+  PMSG_SET_QMETRIC = 17,  /* phone->watch: SECONDS 0/1 — the hr-quality-diag
                              firmware is installed, so the worker may gate
                              liveness on the raw-quality metric (lab data
                              2026-08-29: worn floor = Acceptable; all
                              off-body conditions read OffWrist) */
+  PMSG_ALARM_ACK = 18     /* phone->watch: SECONDS = episode id — app-level
+                             delivery ACK for PRE_ALARM/ALARM/CANCEL; the
+                             watch retries until this arrives (D2) */
 };
 
 /* S1 latency drill: the worker waits this long after the app closes before

@@ -23,6 +23,9 @@ object Protocol {
                                        // HEARTBEAT_SEQ = watch arm->result ms
     const val PMSG_CHARGING = 13       // watch->phone: SECONDS 1=on charger
     const val PMSG_HR_LAB = 14         // phone->watch: SECONDS 1/0 lab on/off
+    const val PMSG_ALARM_ACK = 18      // phone->watch: SECONDS = episode id;
+                                       // app-level ACK for PRE_ALARM/ALARM/
+                                       // CANCEL (the watch retries until it)
     const val PMSG_SET_QMETRIC = 17    // phone->watch: SECONDS 0/1 — diag
                                        // firmware installed, quality gate on
     const val PMSG_SENSOR_FAULT = 16   // watch->phone: no pulse signal while

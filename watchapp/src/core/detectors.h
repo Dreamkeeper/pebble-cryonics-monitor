@@ -91,6 +91,8 @@ typedef struct {
   uint8_t  type;     /* cm_action_type */
   uint8_t  detector; /* cm_detector, when applicable */
   uint8_t  reason;   /* cm_cancel_reason, for CM_ACT_ALERT_CANCELLED */
+  uint16_t episode;  /* ladder episode id (CHECKIN/COUNTDOWN/ALARM/
+                        CANCELLED); 0 = none/informational */
   uint16_t seconds;  /* stage duration / time-until, when applicable */
 } cm_action;
 
@@ -210,6 +212,9 @@ typedef struct {
   uint8_t  stage;                /* cm_stage */
   uint8_t  stage_det;            /* cm_detector */
   uint32_t stage_start_ms;
+  uint16_t episode_seq;          /* last minted episode id (shell seeds from
+                                    persist so ids survive restarts) */
+  uint16_t episode;              /* current/most recent episode id */
 
   /* scheduled check-in */
   uint32_t checkin_due_ms;
@@ -262,6 +267,13 @@ int cm_next_action(cm_core *c, cm_action *out);
 
 /* UI helpers */
 cm_stage cm_current_stage(const cm_core *c);
+
+//! Seconds left in the current CHECKIN/COUNTDOWN stage (0 otherwise).
+uint32_t cm_stage_remaining_s(const cm_core *c, uint32_t now_ms);
+
+//! Re-sync the suspension deadline (shell wall-clock policy) - no-op
+//! unless suspended.
+void cm_suspend_sync_remaining(cm_core *c, uint32_t remaining_s, uint32_t now_ms);
 uint32_t cm_suspend_remaining_s(const cm_core *c, uint32_t now_ms);
 uint32_t cm_checkin_due_in_s(const cm_core *c, uint32_t now_ms);
 

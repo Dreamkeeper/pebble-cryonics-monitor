@@ -67,6 +67,9 @@ typedef struct __attribute__((packed)) {
   uint16_t motion_age_s;
   uint8_t flags;           /* CM_DIAG_* bits */
   uint8_t heap64;          /* free worker heap / 64 (0 = unknown; was pad) */
+  uint16_t episode;        /* v3: ladder episode id (0 = none) - makes the
+                              spooled channel an authoritative ALARM
+                              recovery path on the phone */
 } cm_heartbeat_rec;
 
 static uint32_t now_ms(void) {
@@ -76,8 +79,16 @@ static uint32_t now_ms(void) {
   return (uint32_t)s * 1000u + ms;
 }
 
+/* Monotonic detector clock (delivery hardening D6): all cm_* calls use
+ * this tick-driven time, so a wall-clock correction (phone sync, DST)
+ * can never stretch or shorten a detector window or countdown. Wall
+ * clock remains for DL epochs, drill stamps, and persisted suspension
+ * deadlines. */
+static uint32_t s_mono_ms;
+static uint32_t mono_ms(void) { return s_mono_ms; }
+
 static uint16_t age_s(uint32_t since_ms) {
-  uint32_t a = (now_ms() - since_ms) / 1000u;
+  uint32_t a = (mono_ms() - since_ms) / 1000u;
   return (uint16_t)(a > 9999u ? 9999u : a);
 }
 
@@ -97,12 +108,22 @@ static void push_status_to_app(void) {
    * raw bpm (capped 255), high byte = free heap / 64 B. */
   uint32_t heap = heap_bytes_free();
   if (heap > 255u * 64u) heap = 255u * 64u;
+  /* v2 pack (delivery hardening D4):
+   * data0 = stage(b0-2) | detector<<3 (b3-5) | charging<<7 | bpm<<8
+   * data1 = episode id (0 when idle)
+   * data2 = low byte: stage-remaining s (stage active) OR suspend
+   *         remaining MIN (idle), both capped 255; high byte: heap/64 */
+  uint8_t stage = (uint8_t)cm_current_stage(&s_core);
+  uint32_t low = stage != CM_STAGE_NONE
+      ? cm_stage_remaining_s(&s_core, mono_ms())
+      : (cm_suspend_remaining_s(&s_core, mono_ms()) + 59u) / 60u;
+  if (low > 255u) low = 255u;
   AppWorkerMessage m = {
-    .data0 = (uint16_t)(cm_current_stage(&s_core) |
-                        ((uint16_t)s_core.charging << 8)),
-    .data1 = (uint16_t)((s_last_bpm > 255 ? 255 : s_last_bpm) |
-                        ((heap / 64u) << 8)),
-    .data2 = (uint16_t)((cm_suspend_remaining_s(&s_core, now_ms()) + 59u) / 60u),
+    .data0 = (uint16_t)(stage | ((s_core.stage_det & 0x7) << 3) |
+                        ((uint16_t)s_core.charging << 7) |
+                        ((uint16_t)(s_last_bpm > 255 ? 255 : s_last_bpm) << 8)),
+    .data1 = (uint16_t)(stage != CM_STAGE_NONE ? s_core.episode : 0),
+    .data2 = (uint16_t)(low | ((heap / 64u) << 8)),
   };
   app_worker_send_message(WMSG_STATUS, &m);
   if (s_debug) {
@@ -155,6 +176,9 @@ static void drain_actions(void) {
       case CM_ACT_CHECKIN_START:
       case CM_ACT_COUNTDOWN_START:
       case CM_ACT_ALARM:
+        /* Episode ids must survive restarts: persist the sequence when a
+         * new episode starts (mint happens core-side). */
+        persist_write_int(PK_EPISODE_SEQ, s_core.episode_seq);
         notify_app(&a, true);
         break;
       /* Only reached when the wearer opted into scheduled check-ins, i.e.
@@ -230,7 +254,7 @@ static void accel_handler(AccelData *data, uint32_t num_samples) {
     s[i].did_vibrate = data[i].did_vibrate ? 1 : 0;
   }
   uint32_t motion_before = s_core.last_motion_ms;
-  cm_accel_feed(&s_core, s, n, now_ms());
+  cm_accel_feed(&s_core, s, n, mono_ms());
   if (s_debug) {
     if (s_core.last_motion_ms != motion_before) s_dbg_motion_events++;
     s_dbg_last_mag = s_core.prev_mag;
@@ -249,7 +273,7 @@ static void health_handler(HealthEventType event, void *context) {
      * available (phone-confirmed — stock firmware asserts on the unknown
      * metric), a sub-Acceptable reading counts as NO signal for
      * liveness/resume. Lab streaming stays raw. */
-    if (s_qmetric && bpm > 0) {
+    if (s_qmetric && s_mono_ms > 90000u && bpm > 0) {
       HealthValue q = health_service_peek_current_value((HealthMetric)9);
       if (q < 2 /* HRMQuality_Acceptable */) {
         DLOG("hr raw=%d gated: quality=%d", (int)bpm, (int)q);
@@ -257,13 +281,13 @@ static void health_handler(HealthEventType event, void *context) {
       }
     }
     s_last_bpm = bpm > 0 ? (uint16_t)bpm : 0;
-    s_last_hr_event_ms = now_ms();
+    s_last_hr_event_ms = mono_ms();
     if (s_debug) {
       s_dbg_hr_updates++;
       s_dbg_last_bpm = s_last_bpm;
       DLOG("hr raw=%d burst=%u", (int)bpm, s_hr_burst_active);
     }
-    cm_hr_feed(&s_core, bpm > 0 ? (uint16_t)bpm : 0, now_ms());
+    cm_hr_feed(&s_core, bpm > 0 ? (uint16_t)bpm : 0, mono_ms());
     drain_actions();
   }
 }
@@ -272,7 +296,7 @@ static void health_handler(HealthEventType event, void *context) {
 /* On the charger = deliberately off-wrist: implicit suspension. The core
  * silences detectors while plugged and resets baselines on unplug. */
 static void battery_handler(BatteryChargeState state) {
-  cm_set_charging(&s_core, state.is_plugged, now_ms());
+  cm_set_charging(&s_core, state.is_plugged, mono_ms());
   drain_actions();
 }
 
@@ -281,7 +305,10 @@ static void log_heartbeat(void) {
   if (heap64 > 255u) heap64 = 255u;
   cm_heartbeat_rec rec = {
     .epoch_s = (uint32_t)time(NULL),
-    .stage = (uint8_t)cm_current_stage(&s_core),
+    /* v3: low nibble = stage, high nibble = stage detector */
+    .stage = (uint8_t)(cm_current_stage(&s_core) |
+                       (cm_current_stage(&s_core) != CM_STAGE_NONE
+                            ? (s_core.stage_det << 4) : 0)),
     .battery_pct = battery_state_service_peek().charge_percent,
     .last_bpm = (uint8_t)(s_last_bpm > 255 ? 255 : s_last_bpm),
     .suspended = s_core.suspended,
@@ -292,12 +319,35 @@ static void log_heartbeat(void) {
      * crash risk at the worst moment, so the margin must be a trended
      * number, not an anecdote. */
     .heap64 = (uint8_t)heap64,
+    .episode = (uint16_t)(cm_current_stage(&s_core) != CM_STAGE_NONE
+                              ? s_core.episode : 0),
   };
   data_logging_log(s_log_session, &rec, 1);
 }
 
+static uint32_t s_last_wall_ms;
+
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
-  cm_tick(&s_core, now_ms(), (uint8_t)tick_time->tm_hour);
+  s_mono_ms += 1000;
+  /* Wall-clock jump detection: suspensions deliberately keep wall-clock
+   * semantics ("30 min" means 30 wall minutes), so on a correction the
+   * persisted epoch deadline re-syncs the mono deadline. Detectors are
+   * untouched - they only ever see the mono clock. */
+  uint32_t wall = now_ms();
+  if (s_last_wall_ms) {
+    int32_t drift = (int32_t)(wall - s_last_wall_ms) - 1000;
+    if (drift > 5000 || drift < -5000) {
+      APP_LOG(APP_LOG_LEVEL_WARNING, "wall clock jumped %ld ms", (long)drift);
+      if (s_core.suspended && persist_exists(PK_SUSPEND_UNTIL)) {
+        time_t until = (time_t)persist_read_int(PK_SUSPEND_UNTIL);
+        time_t nowep = time(NULL);
+        uint32_t rem = until > nowep ? (uint32_t)(until - nowep) : 0;
+        cm_suspend_sync_remaining(&s_core, rem, mono_ms());
+      }
+    }
+  }
+  s_last_wall_ms = wall;
+  cm_tick(&s_core, mono_ms(), (uint8_t)tick_time->tm_hour);
   drain_actions();
 
   /* S1 latency drill: fire a synthetic alert through the REAL alarm path
@@ -346,7 +396,7 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
     uint32_t heap = heap_bytes_free();
     if (heap > 255u * 64u) heap = 255u * 64u;
     uint32_t age_s = s_last_hr_event_ms
-        ? (now_ms() - s_last_hr_event_ms) / 1000u : 255u;
+        ? (mono_ms() - s_last_hr_event_ms) / 1000u : 255u;
     if (age_s > 255u) age_s = 255u;
     uint32_t filt_c = filt > 0 ? (filt > 255 ? 255u : (uint32_t)filt) : 0u;
     AppWorkerMessage lab = {
@@ -373,18 +423,18 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
 
 static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
   switch (type) {
-    case WMSG_USER_OK: cm_user_ok(&s_core, now_ms()); break;
+    case WMSG_USER_OK: cm_user_ok(&s_core, mono_ms()); break;
     case WMSG_SUSPEND:
-      cm_suspend(&s_core, (uint32_t)m->data0 * 60u, (uint8_t)m->data1, now_ms());
+      cm_suspend(&s_core, (uint32_t)m->data0 * 60u, (uint8_t)m->data1, mono_ms());
       persist_write_int(PK_SUSPEND_UNTIL, (int)(time(NULL) + m->data0 * 60));
       persist_write_int(PK_SUSPEND_AUTORESUME, m->data1);
       break;
     case WMSG_RESUME:
-      cm_resume(&s_core, now_ms());
+      cm_resume(&s_core, mono_ms());
       persist_delete(PK_SUSPEND_UNTIL);
       persist_delete(PK_SUSPEND_AUTORESUME);
       break;
-    case WMSG_SOS: cm_manual_sos(&s_core, now_ms()); break;
+    case WMSG_SOS: cm_manual_sos(&s_core, mono_ms()); break;
     case WMSG_STATUS_REQ: push_status_to_app(); break;
     case WMSG_DRILL:
       s_drill_countdown = CM_DRILL_DELAY_S;
@@ -394,7 +444,7 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
     case WMSG_HR_LAB:
       s_hr_lab = (uint8_t)m->data0;
       s_lab_elapsed_s = 0;
-      cm_set_lab_hold(&s_core, s_hr_lab, now_ms());
+      cm_set_lab_hold(&s_core, s_hr_lab, mono_ms());
       drain_actions();
       set_hr_burst(s_hr_lab != 0); /* 1 s sampling for the lab duration */
       APP_LOG(APP_LOG_LEVEL_INFO, "hr lab %s", s_hr_lab ? "ON" : "off");
@@ -437,7 +487,7 @@ static void restore_suspension(void) {
   time_t now = time(NULL);
   if (until > now) {
     cm_suspend(&s_core, (uint32_t)(until - now),
-               (uint8_t)persist_read_int(PK_SUSPEND_AUTORESUME), now_ms());
+               (uint8_t)persist_read_int(PK_SUSPEND_AUTORESUME), mono_ms());
     drain_actions();
   }
 }
@@ -452,9 +502,11 @@ static void init(void) {
   persist_delete(PK_PENDING_ACTION_T);
   cm_config cfg;
   load_config(&cfg);
-  cm_init(&s_core, &cfg, now_ms());
+  cm_init(&s_core, &cfg, mono_ms());
   s_debug = persist_exists(PK_DEBUG) ? (uint8_t)persist_read_int(PK_DEBUG) : 0;
   s_qmetric = persist_exists(PK_QMETRIC) ? (uint8_t)persist_read_int(PK_QMETRIC) : 0;
+  s_core.episode_seq = persist_exists(PK_EPISODE_SEQ)
+      ? (uint16_t)persist_read_int(PK_EPISODE_SEQ) : 0;
   if (s_debug) {
     APP_LOG(APP_LOG_LEVEL_INFO,
             "worker up (debug ON) hr=%u heap_free=%u",

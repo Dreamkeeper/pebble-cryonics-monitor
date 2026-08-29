@@ -54,12 +54,18 @@ class SettingsStore(context: Context) {
         get() = p.getBoolean("lab_quality_metric", false)
         set(v) = p.edit().putBoolean("lab_quality_metric", v).apply()
 
+    /** Ring of the last 8 escalated ladder episode ids: the same episode
+     *  never escalates twice regardless of channel (delivery hardening). */
+    var escalatedEpisodes: List<Int>
+        get() = (p.getString("escalated_eps", "") ?: "")
+            .split(',').mapNotNull { it.toIntOrNull() }
+        set(v) = p.edit().putString("escalated_eps",
+            v.takeLast(8).joinToString(",")).apply()
+
     /**
-     * S5 fallback (owner decision 2026-08-27): the worker cannot reach the
-     * phone while the watchapp is closed (no AppMessage; DataLogging dead
-     * in the current phone stack), so the companion may periodically
-     * launch the watchapp for a brief sync — screen flashes for a few
-     * seconds, watch data age + battery refresh. Minutes; 0 = off.
+     * S5 fallback (owner decision 2026-08-27): the companion may
+     * periodically launch the watchapp for a brief sync — screen flashes
+     * for a few seconds, watch data age + battery refresh. Minutes; 0 = off.
      */
     var watchSyncIntervalMin: Int
         get() = p.getInt("watch_sync_interval_min", 60)

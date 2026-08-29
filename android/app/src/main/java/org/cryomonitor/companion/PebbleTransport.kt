@@ -152,5 +152,6 @@ class PebbleTransport(
         const val KEY_HR_BPM = 8
         const val KEY_SUSPEND_REMAINING_S = 9
         const val KEY_CFG_BLOB = 10
+        const val KEY_EPISODE = 11
     }
 }

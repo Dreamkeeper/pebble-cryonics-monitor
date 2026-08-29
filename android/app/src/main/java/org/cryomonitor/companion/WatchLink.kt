@@ -48,6 +48,15 @@ class WatchLink(
      * on Pebble) and kill its phone-side JS — field finding 2026-08-28:
      * our self-heal launches were breaking GymTracker mid-workout.
      */
+    /** True when the connected watch runs a dev firmware build (v9.9.9)
+     *  — the only builds carrying the diagnostic raw-quality metric.
+     *  Gating the quality push on this makes a stale persisted flag
+     *  harmless after a downgrade to stock (review finding 7). */
+    fun firmwareIsDevBuild(): Boolean = lastWatch?.let {
+        it.firmwareVersionMajor == 9 && it.firmwareVersionMinor == 9 &&
+            it.firmwareVersionPatch == 9
+    } ?: false
+
     suspend fun foreignAppActive(): Boolean {
         val watch = lastWatch ?: return false
         return runCatching {

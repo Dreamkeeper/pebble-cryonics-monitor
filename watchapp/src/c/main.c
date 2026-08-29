@@ -81,11 +81,54 @@ static void send_to_phone(uint8_t msg_type, const cm_action *a) {
     dict_write_uint8(out, MESSAGE_KEY_DETECTOR, a->detector);
     dict_write_uint8(out, MESSAGE_KEY_CANCEL_REASON, a->reason);
     dict_write_uint16(out, MESSAGE_KEY_SECONDS, a->seconds);
+    dict_write_uint16(out, MESSAGE_KEY_EPISODE, a->episode);
   }
   dict_write_uint8(out, MESSAGE_KEY_WATCH_BATTERY,
                    battery_state_service_peek().charge_percent);
   app_message_outbox_send();
   DLOG("tx pmsg=%u det=%u", msg_type, a ? a->detector : 0);
+}
+
+/* ---- acknowledged alarm delivery (hardening D2) ----
+ * PRE_ALARM / ALARM / CANCEL are the messages that must arrive: they are
+ * retried with backoff (1/2/4/8 s then 15 s) until the phone answers
+ * PMSG_ALARM_ACK with the episode id, the episode ends, or the app
+ * exits (the DataLogging channel then carries the ALARM). */
+static cm_action s_pending_alarm;
+static uint8_t s_pending_msg;      /* PMSG_* awaiting ACK; 0 = none */
+static uint8_t s_pending_attempt;
+static AppTimer *s_alarm_retry;
+
+static void alarm_retry_cb(void *ctx);
+
+static void schedule_alarm_retry(void) {
+  static const uint16_t backoff_ms[4] = {1000, 2000, 4000, 8000};
+  uint32_t d = s_pending_attempt < 4 ? backoff_ms[s_pending_attempt] : 15000;
+  if (s_alarm_retry) app_timer_cancel(s_alarm_retry);
+  s_alarm_retry = app_timer_register(d, alarm_retry_cb, NULL);
+}
+
+static void alarm_retry_cb(void *ctx) {
+  s_alarm_retry = NULL;
+  if (!s_pending_msg) return;
+  s_pending_attempt++;
+  DLOG("alarm retry #%u pmsg=%u ep=%u", s_pending_attempt, s_pending_msg,
+       s_pending_alarm.episode);
+  send_to_phone(s_pending_msg, &s_pending_alarm);
+  schedule_alarm_retry();
+}
+
+static void send_alarm_to_phone(uint8_t msg_type, const cm_action *a) {
+  s_pending_alarm = *a;
+  s_pending_msg = msg_type;
+  s_pending_attempt = 0;
+  send_to_phone(msg_type, a);
+  schedule_alarm_retry();
+}
+
+static void clear_pending_alarm(void) {
+  s_pending_msg = 0;
+  if (s_alarm_retry) { app_timer_cancel(s_alarm_retry); s_alarm_retry = NULL; }
 }
 
 static void set_debug(uint8_t on) {
@@ -101,6 +144,14 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
   if (!t) return;
   DLOG("rx pmsg=%u", t->value->uint8);
   switch (t->value->uint8) {
+    case PMSG_ALARM_ACK: {
+      Tuple *v = dict_find(iter, MESSAGE_KEY_SECONDS);
+      if (v && s_pending_msg && v->value->uint16 == s_pending_alarm.episode) {
+        DLOG("alarm ep=%u ACKed by phone", s_pending_alarm.episode);
+        clear_pending_alarm();
+      }
+      break;
+    }
     case PMSG_SET_DEBUG: {
       Tuple *v = dict_find(iter, MESSAGE_KEY_SECONDS);
       set_debug(v && v->value->uint16 ? 1 : 0);
@@ -222,11 +273,34 @@ static void alert_apply_style(void) {
   }
 }
 
-static void alert_select(ClickRecognizerRef ref, void *ctx) {
+static AppTimer *s_cancel_timer;
+static uint8_t s_cancel_attempts;
+
+static void cancel_retry_cb(void *ctx) {
+  s_cancel_timer = NULL;
+  if (!s_alert_window) { s_cancel_attempts = 0; return; } /* echo arrived */
+  if (s_cancel_attempts >= 5) {
+    text_layer_set_text(s_alert_body, "CANCEL FAILED\nPress again");
+    s_cancel_attempts = 0;
+    return;
+  }
   AppWorkerMessage m = {0};
   app_worker_send_message(WMSG_USER_OK, &m);
+  s_cancel_attempts++;
+  s_cancel_timer = app_timer_register(700, cancel_retry_cb, NULL);
+}
+
+static void alert_select(ClickRecognizerRef ref, void *ctx) {
+  /* The UI clears ONLY on the worker's ALERT_CANCELLED echo (hardening
+   * D5): a cancel that never reached the worker must not look
+   * successful while the ladder marches on. */
   vibes_cancel();
-  window_stack_remove(s_alert_window, true);
+  text_layer_set_text(s_alert_body, "Cancelling...");
+  AppWorkerMessage m = {0};
+  app_worker_send_message(WMSG_USER_OK, &m);
+  s_cancel_attempts = 1;
+  if (s_cancel_timer) app_timer_cancel(s_cancel_timer);
+  s_cancel_timer = app_timer_register(700, cancel_retry_cb, NULL);
 }
 
 static void alert_click_config(void *ctx) {
@@ -274,10 +348,13 @@ static void alert_window_unload(Window *w) {
 
 static void show_alert(const cm_action *a) {
   s_alert_action = *a;
-  if (a->type == CM_ACT_COUNTDOWN_START) send_to_phone(PMSG_PRE_ALARM, a);
-  if (a->type == CM_ACT_ALARM) send_to_phone(PMSG_ALARM, a);
+  if (a->type == CM_ACT_COUNTDOWN_START) send_alarm_to_phone(PMSG_PRE_ALARM, a);
+  if (a->type == CM_ACT_ALARM) send_alarm_to_phone(PMSG_ALARM, a);
   if (a->type == CM_ACT_ALERT_CANCELLED) {
-    send_to_phone(PMSG_CANCEL, a);
+    if (s_cancel_timer) { app_timer_cancel(s_cancel_timer); s_cancel_timer = NULL; }
+    s_cancel_attempts = 0;
+    send_alarm_to_phone(PMSG_CANCEL, a); /* retried too: a lost cancel
+                                            leaves contacts escalating */
     vibes_cancel();
     if (s_alert_window) window_stack_remove(s_alert_window, true);
     /* Nothing left to show: hand the screen back to the watchface. */
@@ -397,7 +474,12 @@ static void pickup_pending_action(void) {
   persist_delete(PK_PENDING_ACTION);
   persist_delete(PK_PENDING_ACTION_T);
   if (!ok) return;
-  if (parked == 0 || time(NULL) - parked > 60) return; /* stale: drop */
+  /* Ladder actions never expire by age (hardening D4): the worker state
+   * is the truth and status reconciliation corrects staleness within a
+   * second. Informational nags keep the 60 s guard. */
+  int ladder = a.type == CM_ACT_CHECKIN_START ||
+               a.type == CM_ACT_COUNTDOWN_START || a.type == CM_ACT_ALARM;
+  if (!ladder && (parked == 0 || time(NULL) - parked > 60)) return;
   handle_action(&a);
 }
 
@@ -453,25 +535,52 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
       layer_set_hidden(text_layer_get_layer(s_diag_layer), false);
     }
   } else if (type == WMSG_STATUS) {
-    uint16_t stage = m->data0 & 0xFFu;      /* high byte = charging hold */
-    uint8_t charging = (uint8_t)(m->data0 >> 8);
+    /* v2 pack: data0 = stage|det<<3|charging<<7|bpm<<8; data1 = episode;
+     * data2 = stage-secs-or-suspend-min | heap64<<8 (hardening D4). */
+    uint8_t stage = (uint8_t)(m->data0 & 0x7u);
+    uint8_t st_det = (uint8_t)((m->data0 >> 3) & 0x7u);
+    uint8_t charging = (uint8_t)((m->data0 >> 7) & 0x1u);
+    uint16_t episode = m->data1;
+    uint8_t low = (uint8_t)(m->data2 & 0xFFu);
     if (s_debug && !s_lab_hold) {
       /* Cache bpm|heap; the WMSG_DIAG that follows renders the line. */
-      s_dbg_status_d1 = m->data1;
+      s_dbg_status_d1 =
+          (uint16_t)(((m->data0 >> 8) & 0xFFu) | (m->data2 & 0xFF00u));
     }
     /* Keep the big status line truthful: the worker owns the state, the
      * app just displays it (a stale "Suspended 30 min" after auto-resume
      * was exactly the failure mode this prevents). */
     if (!s_nag_hold && !s_lab_hold) {
-      if (m->data2 > 0) {
+      if (stage == CM_STAGE_NONE && low > 0) {
         snprintf(s_status_buf, sizeof(s_status_buf), "Suspended %u min",
-                 (unsigned)m->data2);
+                 (unsigned)low);
         text_layer_set_text(s_status_layer, s_status_buf);
       } else if (charging) {
         text_layer_set_text(s_status_layer, "Charging");
-      } else if (stage == (uint16_t)CM_STAGE_NONE) {
+      } else if (stage == CM_STAGE_NONE) {
         text_layer_set_text(s_status_layer, "Monitoring");
       }
+    }
+    /* Reconciliation (hardening D4): an active ladder stage with no
+     * alert window means a lost handoff — rebuild the UI and re-notify
+     * the phone (which dedups by episode). A cleared stage with a
+     * lingering window means the cancel echo was lost — close it. */
+    if (stage != CM_STAGE_NONE && !s_alert_window && !s_lab_hold) {
+      cm_action ra = {
+        .type = stage == CM_STAGE_CHECKIN ? CM_ACT_CHECKIN_START
+              : stage == CM_STAGE_COUNTDOWN ? CM_ACT_COUNTDOWN_START
+              : CM_ACT_ALARM,
+        .detector = st_det, .reason = 0, .episode = episode,
+        .seconds = low,
+      };
+      DLOG("reconcile: worker stage=%u det=%u ep=%u", stage, st_det, episode);
+      handle_action(&ra);
+    } else if (stage == CM_STAGE_NONE && s_alert_window) {
+      DLOG("reconcile: worker idle, closing stale alert UI");
+      vibes_cancel();
+      clear_pending_alarm();
+      if (s_cancel_timer) { app_timer_cancel(s_cancel_timer); s_cancel_timer = NULL; }
+      window_stack_remove(s_alert_window, true);
     }
     /* Auto-launch guard: this screen was opened by the worker or the
      * phone, not the wearer. Once no ladder stage needs attention, hand
@@ -481,7 +590,7 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
      * it deliberately has no ladder stage. */
     if (s_auto_launched && !s_nag_hold && !s_lab_hold &&
         s_drill_hold_ticks == 0 && s_phone_grace_ticks == 0 &&
-        stage == (uint16_t)CM_STAGE_NONE) {
+        stage == CM_STAGE_NONE) {
       DLOG("stale worker launch: no active stage, returning to watchface");
       vibes_cancel();
       if (s_alert_window) window_stack_remove(s_alert_window, true);

@@ -273,7 +273,6 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 31) wanted += Manifest.permission.BLUETOOTH_CONNECT
         if (Build.VERSION.SDK_INT >= 33) wanted += Manifest.permission.POST_NOTIFICATIONS
         wanted += Manifest.permission.ACCESS_FINE_LOCATION
-        wanted += Manifest.permission.SEND_SMS
         val missing = wanted.filter {
             checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
         }

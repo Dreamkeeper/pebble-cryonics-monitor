@@ -21,10 +21,12 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- Fallback escalation + gateway role: sideload flavor only.
-         TODO(M1): move to src/sideload/AndroidManifest.xml -->
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- SEND_SMS / CALL_PHONE removed 2026-08-29: they were the Play
+         Protect "harmful app" trigger on a sideloaded unknown-cert APK,
+         and nothing needs them today — the wearer's emergency dial uses
+         ACTION_DIAL (permissionless) and Escalator's SMS path already
+         no-ops without the grant. Restore in a dedicated gateway flavor
+         when the SMS fallback ships for real (M4). -->
 
     <application
         android:name=".CmApp"

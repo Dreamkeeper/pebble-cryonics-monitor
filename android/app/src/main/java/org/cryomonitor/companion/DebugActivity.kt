@@ -443,6 +443,10 @@ class DebugActivity : AppCompatActivity() {
             append("worker: dl-records=${soak.get(SoakStats.DL_RECORDS)} " +
                 "faults=${soak.get(SoakStats.WORKER_FAULTS)} " +
                 "sensor-faults=${soak.get(SoakStats.SENSOR_FAULTS)}\n")
+            if (soak.get(SoakStats.WORKER_HEAP_LAST) > 0)
+                append("worker heap: last=${soak.get(SoakStats.WORKER_HEAP_LAST)}B " +
+                    "min=${soak.get(SoakStats.WORKER_HEAP_MIN)}B " +
+                    "(gate: warn <512B)\n")
             append("alarms: pre=${soak.get(SoakStats.PREALARMS)} " +
                 "full=${soak.get(SoakStats.ALARMS)} " +
                 "server-fails=${soak.get(SoakStats.SERVER_FAILS)}\n")

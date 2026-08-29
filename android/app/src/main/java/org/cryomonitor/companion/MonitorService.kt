@@ -43,6 +43,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
     @Volatile private var labActive = false     // S4 lab in progress
     private val dataLogReceiver = DataLogReceiver()
     @Volatile private var workerFaultNotified = false
+    @Volatile private var heapWarned = false
     private val dlFlushLatencies = ArrayDeque<Long>() // S5 stats, last 30
     @Volatile private var watchConnected = false
     @Volatile private var faultNotified = false
@@ -582,6 +583,23 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 if (intent.getIntExtra("suspended", -1) == 0) suspendedUntilT = 0
                 intent.getIntExtra("flags", -1).takeIf { it >= 0 }?.let {
                     chargingHold = (it and 0x01) != 0
+                }
+                // Worker heap low-water (soak telemetry): a failed alloc
+                // can crash the worker at the worst moment, so the margin
+                // is trended, and critical readings raise a FAULT.
+                val heap = intent.getIntExtra("worker_heap", 0)
+                if (heap > 0) {
+                    soak.set(SoakStats.WORKER_HEAP_LAST, heap.toLong())
+                    val min = soak.get(SoakStats.WORKER_HEAP_MIN)
+                    if (min == 0L || heap < min)
+                        soak.set(SoakStats.WORKER_HEAP_MIN, heap.toLong())
+                    if (heap < 512 && !heapWarned) {
+                        heapWarned = true
+                        notifyFault("Watch worker free heap critically low " +
+                            "(${heap}B). A failed allocation can crash the " +
+                            "worker. Reboot the watch; note the reading in " +
+                            "the soak log.")
+                    } else if (heap >= 1024) heapWarned = false
                 }
                 val flushS = intent.getLongExtra("flush_s", -1)
                 if (flushS >= 0) {

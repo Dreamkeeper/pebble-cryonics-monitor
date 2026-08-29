@@ -77,12 +77,13 @@ class DataLogReceiver : BroadcastReceiver() {
         val battery = bytes[5].toInt() and 0xFF
         val bpm = bytes[6].toInt() and 0xFF
         val suspended = bytes[7].toInt()
+        val heap = if (bytes.size == 14) (bytes[13].toInt() and 0xFF) * 64 else 0
         val diag = if (bytes.size == 14) {
             val changeAge = buf.getShort(8).toInt() and 0xFFFF
             val motionAge = buf.getShort(10).toInt() and 0xFFFF
             val flags = bytes[12].toInt() and 0xFF
             " changeAge=${changeAge}s motionAge=${motionAge}s " +
-                "flags=0x%02x".format(flags)
+                "flags=0x%02x heap=${heap}B".format(flags)
         } else ""
         val flushS = System.currentTimeMillis() / 1000 - epochS
         CmLog.i(TAG, "WORKER HEARTBEAT via DataLogging: stage=$stage " +
@@ -98,6 +99,7 @@ class DataLogReceiver : BroadcastReceiver() {
                     .putExtra("stage", stage)
                     .putExtra("suspended", suspended)
                     .putExtra("flags", flags)
+                    .putExtra("worker_heap", heap)
                     .putExtra("flush_s", flushS))
         }.onFailure { CmLog.w(TAG, "could not deliver worker heartbeat: $it") }
     }

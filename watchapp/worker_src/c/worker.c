@@ -66,7 +66,7 @@ typedef struct __attribute__((packed)) {
   uint16_t change_age_s;   /* since last bpm VALUE CHANGE (liveness) */
   uint16_t motion_age_s;
   uint8_t flags;           /* CM_DIAG_* bits */
-  uint8_t pad;
+  uint8_t heap64;          /* free worker heap / 64 (0 = unknown; was pad) */
 } cm_heartbeat_rec;
 
 static uint32_t now_ms(void) {
@@ -277,6 +277,8 @@ static void battery_handler(BatteryChargeState state) {
 }
 
 static void log_heartbeat(void) {
+  uint32_t heap64 = heap_bytes_free() / 64u;
+  if (heap64 > 255u) heap64 = 255u;
   cm_heartbeat_rec rec = {
     .epoch_s = (uint32_t)time(NULL),
     .stage = (uint8_t)cm_current_stage(&s_core),
@@ -286,7 +288,10 @@ static void log_heartbeat(void) {
     .change_age_s = age_s(s_core.last_bpm_change_ms),
     .motion_age_s = age_s(s_core.last_motion_ms),
     .flags = diag_flags(),
-    .pad = 0,
+    /* Heap low-water telemetry (soak): a worker allocation failure is a
+     * crash risk at the worst moment, so the margin must be a trended
+     * number, not an anecdote. */
+    .heap64 = (uint8_t)heap64,
   };
   data_logging_log(s_log_session, &rec, 1);
 }

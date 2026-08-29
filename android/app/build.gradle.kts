@@ -15,8 +15,8 @@ android {
         applicationId = "org.cryomonitor.companion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 38
-        versionName = "0.5.9"
+        versionCode = 39
+        versionName = "0.6.0"
     }
 
     // Release signing: keystore + credentials live OUTSIDE version control

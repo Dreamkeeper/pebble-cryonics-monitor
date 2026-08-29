@@ -157,12 +157,13 @@ class ServerClient(
     // ---- monitoring-path calls (unchanged behavior) ----
 
     fun heartbeat(phoneBatteryPct: Int, watchBatteryPct: Int?, watchDataAgeS: Int?,
-                  lowBatteryWarning: Boolean): HeartbeatAck? {
+                  lowBatteryWarning: Boolean, commandAck: String? = null): HeartbeatAck? {
         val resp = call("POST", "/api/v1/heartbeat", JSONObject().apply {
             put("phone_battery_pct", phoneBatteryPct)
             watchBatteryPct?.let { put("watch_battery_pct", it) }
             watchDataAgeS?.let { put("watch_data_age_s", it) }
             put("low_battery_warning", lowBatteryWarning)
+            commandAck?.let { put("command_ack", it) }
         }) ?: return null
         return HeartbeatAck(resp.optString("state"), resp.optBoolean("degraded"),
                             resp.optString("command").ifEmpty { null })
@@ -195,6 +196,12 @@ class ServerClient(
     fun resolve(escalationId: String, resolution: String): Boolean =
         request("POST", "/api/v1/alarm/$escalationId/resolve?resolution=$resolution",
                 JSONObject()).first in 200..299
+
+    /** Resolve every open watch-origin escalation for this wearer without
+     *  needing its id — the cancel safety net when the id was lost to a
+     *  dropped response or a service restart (review finding 8). */
+    fun resolveOpenAlarms(): Boolean =
+        request("POST", "/api/v1/alarm/resolve-open", JSONObject()).first in 200..299
 
     fun offlineWindow(durationS: Int): Boolean =
         call("POST", "/api/v1/offline-window",

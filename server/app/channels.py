@@ -78,7 +78,10 @@ class NtfyChannel:
         headers = {"Priority": "urgent", "Tags": "rotating_light",
                    "Title": "Cryonics Monitor"}
         if ack_url:
-            headers["Actions"] = f"view, Acknowledge, {ack_url}"
+            # http action: one tap fires the POST from the notification —
+            # the ack endpoint no longer mutates on GET (link scanners).
+            headers["Actions"] = (f"http, Acknowledge, {ack_url}, "
+                                  f"method=POST, clear=true")
         req = urllib.request.Request(
             f"{self.base_url}/{urllib.parse.quote(address)}",
             data=text.encode(), headers=headers)

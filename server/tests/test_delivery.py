@@ -98,8 +98,13 @@ def test_ack_stops_repeats_for_that_contact(appenv):
     _cycle(appenv, t0)
     _, _, ack_url, _ = appenv.fakes["telegram"].sent[0]
     token = ack_url.rsplit("/", 1)[1]
+    # GET is a link scanner's fetch: it must render a page and mutate
+    # NOTHING (review 2026-08-29 finding 2); POST is the human tap.
     r = appenv.client.get(f"/api/v1/ack/{token}")
-    assert "Acknowledged" in r.json()["message"]
+    assert r.status_code == 200 and "Acknowledge" in r.text
+    assert not any(e.any_ack for _, e in appenv.main.escalations.values())
+    r = appenv.client.post(f"/api/v1/ack/{token}")
+    assert "Acknowledged" in r.text
 
     _cycle(appenv, t0 + 1801)
     assert len(appenv.fakes["telegram"].sent) == 1   # acked: no repeat
@@ -198,3 +203,55 @@ def test_phone_recovery_resolves_and_notifies(appenv):
     count_after = len(appenv.fakes["telegram"].sent)
     _cycle(appenv, t0 + 2200)
     assert len(appenv.fakes["telegram"].sent) == count_after
+
+
+def test_alarm_retry_is_idempotent(appenv):
+    _setup_contacts(appenv)
+    first = _alarm(appenv)
+    second = _alarm(appenv)   # phone retry after a lost response
+    assert first == second
+    open_ids = [eid for eid, (_, e) in appenv.main.escalations.items()
+                if not e.resolved]
+    assert open_ids == [first]
+
+
+def test_resolve_open_clears_watch_alarms_only(appenv):
+    _setup_contacts(appenv)
+    esc_id = _alarm(appenv)
+    t0 = time.time()
+    appenv.main.get_monitor("default").heartbeat(t0, 80)
+    _cycle(appenv, t0 + 2000)   # phone_silent advisory also open
+    r = appenv.client.post("/api/v1/alarm/resolve-open", json={},
+                           headers=wearer_headers())
+    assert esc_id in r.json()["resolved"]
+    for _, e in appenv.main.escalations.values():
+        if e.kind.value == "watch_alarm":
+            assert e.resolved
+        if e.kind.value == "phone_silent":
+            assert not e.resolved   # advisories are the deadman's to close
+
+
+def test_command_survives_lost_response_until_acked(appenv):
+    appenv.main.db.queue_command("default", "latency_drill")
+    r = appenv.client.post("/api/v1/heartbeat", json={},
+                           headers=wearer_headers())
+    assert r.json().get("command") == "latency_drill"
+    # response lost: next heartbeat redelivers
+    r = appenv.client.post("/api/v1/heartbeat", json={},
+                           headers=wearer_headers())
+    assert r.json().get("command") == "latency_drill"
+    # phone acks: command is consumed
+    r = appenv.client.post("/api/v1/heartbeat",
+                           json={"command_ack": "latency_drill"},
+                           headers=wearer_headers())
+    assert "command" not in r.json()
+
+
+def test_wearer_status_excludes_global_audit_rows(appenv):
+    appenv.main.db.add_event(None, "login_failed",
+                             {"username": "admin", "client": "1.2.3.4"})
+    appenv.main.db.add_event("default", "offline_window", {"duration_s": 60})
+    r = appenv.client.get("/api/v1/status", headers=wearer_headers())
+    kinds = [e["kind"] for e in r.json()["recent_events"]]
+    assert "offline_window" in kinds
+    assert "login_failed" not in kinds

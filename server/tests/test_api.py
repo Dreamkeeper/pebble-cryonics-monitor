@@ -41,16 +41,21 @@ def test_heartbeat_trail_stores_both_batteries(appenv):
     assert trail[0]["watch_battery"] == 80
 
 
-def test_latency_drill_command_delivered_exactly_once(appenv):
-    """M0 spike S1: dashboard queues a drill; the phone gets it on one
-    heartbeat only; the result lands in the event log."""
+def test_latency_drill_command_leased_until_acked(appenv):
+    """M0 spike S1 + review finding 14: the drill is redelivered on every
+    heartbeat until the phone acks it (a deleted-on-read command dies with
+    a lost HTTP response); the ack consumes it."""
     appenv.store.queue_command("default", "latency_drill")
     first = appenv.client.post("/api/v1/heartbeat", json={},
                                headers=wearer_headers()).json()
     assert first.get("command") == "latency_drill"
     second = appenv.client.post("/api/v1/heartbeat", json={},
                                 headers=wearer_headers()).json()
-    assert "command" not in second
+    assert second.get("command") == "latency_drill"  # unacked: redelivered
+    third = appenv.client.post("/api/v1/heartbeat",
+                               json={"command_ack": "latency_drill"},
+                               headers=wearer_headers()).json()
+    assert "command" not in third                    # ack consumed it
 
     r = appenv.client.post("/api/v1/drill-result",
                            json={"launch_ms": 71, "rtt_ms": 9459,

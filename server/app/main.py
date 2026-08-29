@@ -11,10 +11,12 @@ import asyncio
 import logging
 import os
 import secrets
+import threading
 import time
 import uuid
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from . import operators, telegram_poll, ui
@@ -121,6 +123,7 @@ class HeartbeatIn(BaseModel):
     watch_data_age_s: int | None = None
     suspended_until: float | None = None
     low_battery_warning: bool = False
+    command_ack: str | None = None   # echo of the last executed command
 
 
 class AlarmIn(BaseModel):
@@ -151,11 +154,15 @@ class DrillResultIn(BaseModel):
 def heartbeat(hb: HeartbeatIn, authorization: str | None = Header(default=None)):
     auth = require_wearer(authorization, hb.token)
     t = time.time()
-    m = get_monitor(auth.wearer_id)
-    m.heartbeat(t, hb.phone_battery_pct)
-    if hb.low_battery_warning:
-        m.low_battery_notice(t)
-    _persist_deadman(auth.wearer_id)
+    # The pump evaluates monitors from the event loop while heartbeats
+    # arrive on worker threads; the lock keeps a heartbeat from racing a
+    # SILENT verdict into a false advisory (review 2026-08-29 finding 10).
+    with _deadman_lock:
+        m = get_monitor(auth.wearer_id)
+        m.heartbeat(t, hb.phone_battery_pct)
+        if hb.low_battery_warning:
+            m.low_battery_notice(t)
+        _persist_deadman(auth.wearer_id)
     db.add_heartbeat_point(auth.wearer_id, hb.phone_battery_pct,
                            hb.watch_battery_pct)
     db.set_suspended_until(auth.wearer_id, hb.suspended_until)
@@ -163,7 +170,9 @@ def heartbeat(hb: HeartbeatIn, authorization: str | None = Header(default=None))
               hb.phone_battery_pct, hb.watch_data_age_s)
     resp = {"state": m.state.value, "server_time": t,
             "degraded": wearer_degraded(auth.wearer_id)}
-    cmd = db.pop_command(auth.wearer_id)
+    if hb.command_ack:
+        db.ack_command(auth.wearer_id, hb.command_ack)
+    cmd = db.peek_command(auth.wearer_id)
     if cmd:
         resp["command"] = cmd
         db.add_event(auth.wearer_id, "command_delivered", {"command": cmd})
@@ -199,9 +208,37 @@ def offline_window(w: OfflineWindowIn,
 def alarm(a: AlarmIn, authorization: str | None = Header(default=None)):
     auth = require_wearer(authorization, a.token)
     loc = f"{a.lat},{a.lon}" if a.lat is not None else ""
+    # Idempotent-ish: a phone retry (lost response, service restart) must
+    # not spawn a second escalation that the wearer's cancel then misses
+    # (review 2026-08-29 finding 8).
+    for eid, (wid, e) in escalations.items():
+        if (wid == auth.wearer_id and not e.resolved
+                and e.kind.value == a.kind and e.detector == a.detector):
+            return {"escalation_id": eid}
     esc_id = create_escalation(auth.wearer_id, AlertKind(a.kind),
                                a.detector, loc, time.time())
     return {"escalation_id": esc_id}
+
+
+@app.post("/api/v1/alarm/resolve-open")
+def resolve_open(hb: HeartbeatIn,
+                 authorization: str | None = Header(default=None)):
+    """Wearer cancel without a remembered escalation id: 'I am OK' resolves
+    every open watch-origin escalation for this wearer (never phone_silent
+    — that clears itself on the next heartbeat). Covers the lost-response
+    and restarted-service cases (review 2026-08-29 finding 8)."""
+    auth = require_wearer(authorization, hb.token)
+    resolved = []
+    for eid, (wid, e) in escalations.items():
+        if (wid == auth.wearer_id and not e.resolved
+                and e.kind in (AlertKind.WATCH_ALARM, AlertKind.TEST)):
+            e.resolve("false_alarm")
+            _persist_escalation(eid)
+            db.add_event(wid, "resolved",
+                         {"id": eid, "resolution": "false_alarm",
+                          "by": "wearer_resolve_open"})
+            resolved.append(eid)
+    return {"resolved": resolved}
 
 
 @app.post("/api/v1/alarm/{esc_id}/resolve")
@@ -242,8 +279,28 @@ async def do_ack(raw_token: str) -> str:
 
 
 @app.get("/api/v1/ack/{ack_token}")
+async def ack_page(ack_token: str):
+    """No side effects on GET: mail scanners and link previewers prefetch
+    these URLs, and a robot must never acknowledge an emergency (review
+    2026-08-29 finding 2). The human confirms with one tap (POST)."""
+    known = db.lookup_ack_token(hash_token(ack_token)) is not None
+    body = ("<h2>Acknowledge this alert?</h2>"
+            "<p>Tap to confirm you are responding.</p>"
+            f"<form method='post' action='/api/v1/ack/{ack_token}'>"
+            "<button style='font-size:1.4em;padding:0.6em 1.2em'>"
+            "I acknowledge — I'm on it</button></form>"
+            if known else
+            "<p>Unknown or expired acknowledgement link.</p>")
+    return HTMLResponse(f"<html><body style='font-family:sans-serif;"
+                        f"max-width:30em;margin:3em auto'>{body}</body></html>")
+
+
+@app.post("/api/v1/ack/{ack_token}")
 async def ack(ack_token: str):
-    return {"ok": True, "message": await do_ack(ack_token)}
+    msg = await do_ack(ack_token)
+    return HTMLResponse("<html><body style='font-family:sans-serif;"
+                        f"max-width:30em;margin:3em auto'><p>{msg}</p>"
+                        "</body></html>")
 
 
 # ---- observability ----
@@ -298,6 +355,11 @@ def _ack_token_for(esc_id: str, wearer_id: str, contact_id: str) -> str:
     return _ack_cache[key]
 
 
+# Serializes DeadmanMonitor mutation (heartbeat threads) against the pump's
+# evaluate/decide sequence (review 2026-08-29 finding 10).
+_deadman_lock = threading.Lock()
+
+
 def _has_open(wearer_id: str, kind: AlertKind) -> bool:
     return any(wid == wearer_id and e.kind == kind and not e.resolved
                for wid, e in escalations.values())
@@ -340,24 +402,26 @@ async def pump_cycle(now: float | None = None) -> None:
         if not w["enabled"]:
             continue
         wid = w["id"]
-        m = get_monitor(wid)
-        prev = _prev_states.get(wid, m.state)
-        state = m.evaluate(t)
-        if state != prev:
-            log.info("deadman %s: %s -> %s", wid, prev.value, state.value)
-            db.add_event(wid, "deadman_transition",
-                         {"from": prev.value, "to": state.value})
-            _persist_deadman(wid)
-        if (state == PhoneState.SILENT and prev != PhoneState.SILENT
-                and not _has_open(wid, AlertKind.PHONE_SILENT)):
-            create_escalation(wid, AlertKind.PHONE_SILENT, "phone_silent", "", t)
+        with _deadman_lock:
+            m = get_monitor(wid)
+            prev = _prev_states.get(wid, m.state)
+            state = m.evaluate(t)
+            if state != prev:
+                log.info("deadman %s: %s -> %s", wid, prev.value, state.value)
+                db.add_event(wid, "deadman_transition",
+                             {"from": prev.value, "to": state.value})
+                _persist_deadman(wid)
+            if (state == PhoneState.SILENT and prev != PhoneState.SILENT
+                    and not _has_open(wid, AlertKind.PHONE_SILENT)):
+                create_escalation(wid, AlertKind.PHONE_SILENT,
+                                  "phone_silent", "", t)
+            _prev_states[wid] = state
         if state != PhoneState.SILENT and prev == PhoneState.SILENT:
             # Phone recovered: an advisory without an all-clear leaves the
             # responder wondering (field 2026-08-29). Auto-resolve the open
             # PHONE_SILENT escalation and follow up to everyone who was
             # actually messaged.
             await _notify_phone_recovered(wid, t)
-        _prev_states[wid] = state
 
     # escalation delivery
     for esc_id, (wid, esc) in list(escalations.items()):

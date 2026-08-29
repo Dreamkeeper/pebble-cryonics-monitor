@@ -43,6 +43,8 @@ class MonitorService : Service(), PebbleTransport.Listener {
     @Volatile private var labActive = false     // S4 lab in progress
     private val dataLogReceiver = DataLogReceiver()
     @Volatile private var workerFaultNotified = false
+    @Volatile private var workerProvisionFaulted = false
+    @Volatile private var serviceStartedT = 0L
     @Volatile private var heapWarned = false
     private val dlFlushLatencies = ArrayDeque<Long>() // S5 stats, last 30
     @Volatile private var watchConnected = false
@@ -60,6 +62,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
         CmLog.init(this)
         soak = SoakStats(this)
         soak.noteServiceStart()
+        serviceStartedT = System.currentTimeMillis()
         server = ServerClient(settings)
         escalator = Escalator(this, settings)
         CmLog.i(TAG, "service starting, server=${settings.serverUrl.isNotEmpty()}")
@@ -84,7 +87,14 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     addAction(DataLogReceiver.ACTION_FINISH_SESSION)
                 })
         }
-        selfHealLaunch("service start") // also relaunches the background worker
+        // NOTE: no unconditional self-heal launch here. A fresh service
+        // creation (START_STICKY revive, boot) used to always launch the
+        // watchapp, and during a Core workout transition the active-app
+        // query could read "no foreign app" before the workout became
+        // authoritative — stealing the wearer's screen (review 2026-08-29
+        // finding 15, matching the field report). The watchapp is launched
+        // only for an explicit user test/sync or a verified worker-silent
+        // fault, both of which re-check foreignAppActive at fire time.
 
         scope.launch { watchdogLoop() }
         scheduleHeartbeat(5_000)
@@ -127,6 +137,10 @@ class MonitorService : Service(), PebbleTransport.Listener {
     override fun onAppMessage(data: Map<Int, Any>) {
         lastWatchDataT = System.currentTimeMillis()
         faultNotified = false
+        // An open-app message is worker proof too — the worker launched the
+        // app or answered a poll — so it clears the provisioning fault
+        // (review 2026-08-29 finding 5).
+        workerProvisionFaulted = false
         (data[PebbleTransport.KEY_WATCH_BATTERY] as? Int)?.let { noteWatchBattery(it) }
 
         when (data[PebbleTransport.KEY_MSG_TYPE] as? Int) {
@@ -285,22 +299,33 @@ class MonitorService : Service(), PebbleTransport.Listener {
      * every launch briefly takes the watch screen. A flapping BT link or
      * repeated service restarts must not strobe the wearer's watchface
      * (field finding: the app "popping up by itself").
+     *
+     * When a foreign watchapp is on the screen the launch is DEFERRED, not
+     * dropped: a pending flag re-attempts on the next watchdog tick once
+     * the wearer returns to a watchface. A caller that must know whether
+     * recovery actually happened (the worker-silent fault) keeps its fault
+     * raised until a launch truly fires (review 2026-08-29 finding 6).
      */
+    @Volatile private var selfHealPending: String? = null
+
     private fun selfHealLaunch(reason: String) {
         val now = System.currentTimeMillis()
         if (now - lastSelfHealT < SELF_HEAL_MIN_INTERVAL_MS) {
             CmLog.d(TAG, "self-heal ($reason) suppressed: throttled")
             return
         }
-        lastSelfHealT = now
         scope.launch {
             // Never launch over an app the wearer is actively using —
-            // ours would close it (one foreground app on Pebble).
+            // ours would close it (one foreground app on Pebble). Defer.
             if (watchLink.foreignAppActive()) {
-                CmLog.i(TAG, "self-heal ($reason) skipped: another watchapp " +
-                    "is on the wearer's screen; retrying later")
+                selfHealPending = reason
+                CmLog.i(TAG, "self-heal ($reason) DEFERRED: another watchapp " +
+                    "is on the wearer's screen; will retry when it returns " +
+                    "to a watchface")
                 return@launch
             }
+            lastSelfHealT = now
+            selfHealPending = null
             CmLog.i(TAG, "self-heal ($reason): relaunching watchapp/worker")
             soak.inc(SoakStats.SELF_HEALS)
             watchLink.startWatchapp()
@@ -334,7 +359,13 @@ class MonitorService : Service(), PebbleTransport.Listener {
     private fun retract(reason: String) {
         CmLog.i(TAG, "retract: $reason (esc=$activeEscalationId)")
         clearAlarmUi()
+        // Resolve by id when we have it; ALSO sweep any open watch alarm on
+        // the server, because a lost /alarm response or a service restart
+        // can leave the server escalating with no id on this side — a
+        // "successful" cancel that never reached contacts otherwise (review
+        // 2026-08-29 finding 8).
         activeEscalationId?.let { server.resolve(it, "false_alarm") }
+        server.resolveOpenAlarms()
         activeEscalationId = null
         escalator.cancel(reason)
     }
@@ -438,6 +469,30 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     "Relaunching the watchapp to restore monitoring.")
                 selfHealLaunch("worker silent") // relaunch re-arms the worker
             }
+            // Provisioning-liveness watchdog (review 2026-08-29 finding 5):
+            // if the link is up but NO worker proof has EVER arrived — DL
+            // records nor an open-app heartbeat — past the grace, the
+            // worker may have died before it ever reported. The
+            // eviction watchdog above can't fire (workerLastRecT==0), so
+            // without this the phone looks healthy while no detector runs.
+            if (watchConnected && workerLastRecT == 0L &&
+                serviceStartedT > 0 &&
+                (System.currentTimeMillis() - serviceStartedT) / 1000 >
+                    WORKER_PROVISION_GRACE_S && !workerProvisionFaulted) {
+                workerProvisionFaulted = true
+                CmLog.w(TAG, "no worker proof within provisioning grace")
+                notifyFault("No sign of the watch background worker since " +
+                    "monitoring started. Open the watchapp once to confirm " +
+                    "it is running, or reboot the watch. Detectors may not " +
+                    "be active.")
+                selfHealLaunch("worker never seen")
+            }
+            // Retry a self-heal that was deferred because a foreign
+            // watchapp held the screen (review 2026-08-29 finding 6):
+            // the fault stays visible until a launch truly fires.
+            selfHealPending?.let { reason ->
+                if (!watchLink.foreignAppActive()) selfHealLaunch(reason)
+            }
             // Ask the phone's Pebble app to flush buffered worker records
             // once a minute (every 4th 15 s tick).
             if (flushTick++ % 4 == 0) DataLogReceiver.requestFlush(this)
@@ -533,6 +588,8 @@ class MonitorService : Service(), PebbleTransport.Listener {
         }
     }
 
+    @Volatile private var pendingCommandAck: String? = null
+
     private suspend fun doServerHeartbeat() {
         if (!server.configured) return
         val bm = getSystemService(BatteryManager::class.java)
@@ -540,18 +597,25 @@ class MonitorService : Service(), PebbleTransport.Listener {
         val age = if (lastWatchDataT == 0L) null
                   else ((System.currentTimeMillis() - lastWatchDataT) / 1000).toInt()
         val ack = server.heartbeat(pct, watchBattery, age,
-                                   lowBatteryWarning = pct in 1..15)
+                                   lowBatteryWarning = pct in 1..15,
+                                   commandAck = pendingCommandAck)
         CmLog.d(TAG, "server heartbeat ok=${ack != null} phoneBatt=$pct " +
             "watchAge=$age degraded=${ack?.degraded}")
         if (ack != null) {
             hbFailures = 0
+            pendingCommandAck = null // the server saw our ack
             if (!serverReachable) {
                 serverReachable = true
                 CmLog.i(TAG, "server reachable again")
                 updateNotification()
             }
             onDegradedState(ack.degraded)
-            if (ack.command == "latency_drill") runLatencyDrill()
+            // The command is leased (redelivered until acked): ack it on the
+            // next heartbeat so a lost response can't lose it (finding 14).
+            if (ack.command != null) {
+                pendingCommandAck = ack.command
+                if (ack.command == "latency_drill") runLatencyDrill()
+            }
         } else {
             // One miss is usually a transient (cell handover, Doze exit,
             // DNS blip): retry in a minute BEFORE declaring the server
@@ -660,6 +724,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     workerFaultNotified = false
                     CmLog.i(TAG, "worker heartbeats resumed")
                 }
+                workerProvisionFaulted = false // worker proof has now arrived
                 updateNotification()
             }
             ACTION_SET_DEBUG -> {
@@ -825,6 +890,9 @@ class MonitorService : Service(), PebbleTransport.Listener {
         const val ACTION_HR_LAB = "org.cryomonitor.HR_LAB"
         const val ACTION_HR_SAMPLE = "org.cryomonitor.HR_SAMPLE"
         private const val SELF_HEAL_MIN_INTERVAL_MS = 60_000L
+        // Grace after service start for the FIRST worker proof to appear
+        // before faulting (DL spools in ~4-6 min batches; allow two).
+        private const val WORKER_PROVISION_GRACE_S = 900L
 
         // S5 live stats, read by the debug screen.
         @Volatile var s5RecordCount = 0

@@ -33,13 +33,24 @@ class PebbleTransport(
         override fun onReceive(ctx: Context, intent: Intent) {
             when (intent.action) {
                 INTENT_APP_RECEIVE -> {
-                    val msgUuid = intent.getSerializableExtra("uuid") as? UUID
+                    // Exported receiver: ANY app can send this action. A
+                    // wrong-UUID message is ignored, and all parsing runs
+                    // inside a no-throw boundary so a hostile/malformed
+                    // payload cannot crash the monitor process (review
+                    // 2026-08-29 finding 12).
+                    val msgUuid = runCatching {
+                        intent.getSerializableExtra("uuid") as? UUID
+                    }.getOrNull()
                     if (msgUuid != uuid) return
                     val tid = intent.getIntExtra("transaction_id", -1)
                     ack(tid)
                     val json = intent.getStringExtra("msg_data") ?: return
                     CmLog.d(TAG, "rx tid=$tid $json")
-                    listener.onAppMessage(parseDict(json))
+                    val dict = runCatching { parseDict(json) }.getOrElse {
+                        CmLog.w(TAG, "dropping unparseable AppMessage: $it")
+                        return
+                    }
+                    listener.onAppMessage(dict)
                 }
                 INTENT_PEBBLE_CONNECTED -> {
                     CmLog.i(TAG, "pebble connected")

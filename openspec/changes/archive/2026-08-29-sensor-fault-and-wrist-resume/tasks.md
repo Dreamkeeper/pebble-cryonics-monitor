@@ -15,7 +15,7 @@
        notification + soak counter + soak-card line); build release
        APK to dist.
 - [x] 6. Watchapp 0.4.8: build pbw to dist.
-- [ ] 7. Owner hardware verification: sensor-fault nag wording on a
+- [x] 7. Owner hardware verification: sensor-fault nag wording on a
        failed-HR boot; bag-carry suspension does not auto-resume;
        re-wear resumes within ~1 min.
 - [x] 8. Carry mode (owner follow-up 2026-08-29): long-press UP =
@@ -28,7 +28,7 @@
        branch) + filtered bpm; new air_dangle stage; phone gates the
        quality peek (stock firmware would assert). Watch 0.4.10,
        companion 0.5.3, firmware pebbleos-obelix-pvt-hr-quality-diag.
-- [ ] 10. Owner: flip "Lab reads raw HR quality" on, sideload the diag
+- [x] 10. Owner: flip "Lab reads raw HR quality" on, sideload the diag
        .pbz + 0.4.10 + 0.5.3, run the 7-stage lab. Data decides the
        liveness quality gate and feeds the upstream Goodix issue.
 - [x] 10. Lab run 2026-08-29 (owner, diag firmware): worn floor =
@@ -46,6 +46,6 @@
 - [x] 12. S6 estimator honesty (owner report: 62.9d was fiction): drain
        now sums only descending segments (charges excluded, >48h gaps
        dropped), needs >=6h of discharge before projecting.
-- [ ] 13. Owner: install 0.4.11 + 0.5.4, keep the quality switch ON,
+- [x] 13. Owner: install 0.4.11 + 0.5.4, keep the quality switch ON,
        verify carry/bag/resume behavior and the corrected S6 figure
        after a charge-free stretch.

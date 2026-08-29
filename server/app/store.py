@@ -334,7 +334,11 @@ class Store:
             if wearer_id is None:  # admin: everything
                 rows = c.execute(q.format(""), (limit,)).fetchall()
             else:
-                rows = c.execute(q.format("WHERE wearer_id=? OR wearer_id IS NULL"),
+                # Strictly this wearer's rows: NULL-wearer rows are the
+                # global operator audit stream (logins, role changes) and
+                # must never reach a wearer bearer token (review 2026-08-29
+                # finding 13).
+                rows = c.execute(q.format("WHERE wearer_id=?"),
                                  (wearer_id, limit)).fetchall()
         return [{"t": r["t"], "kind": r["kind"], "wearer_id": r["wearer_id"],
                  **json.loads(r["data"])} for r in reversed(rows)]
@@ -435,15 +439,20 @@ class Store:
             c.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?,?)",
                       (f"cmd:{wearer_id}", command))
 
-    def pop_command(self, wearer_id: str) -> str | None:
-        """Return and clear the pending command — delivered exactly once."""
+    def peek_command(self, wearer_id: str) -> str | None:
+        """Return the pending command WITHOUT clearing it: it is redelivered
+        on every heartbeat until the phone acks it (review 2026-08-29
+        finding 14 — deleting before the response survives the network
+        loses the command)."""
         with self._conn() as c:
             row = c.execute("SELECT value FROM kv WHERE key=?",
                             (f"cmd:{wearer_id}",)).fetchone()
-            if row is None:
-                return None
-            c.execute("DELETE FROM kv WHERE key=?", (f"cmd:{wearer_id}",))
-            return row["value"]
+            return row["value"] if row else None
+
+    def ack_command(self, wearer_id: str, value: str) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM kv WHERE key=? AND value=?",
+                      (f"cmd:{wearer_id}", value))
 
     def heartbeat_trail(self, wearer_id: str, limit: int = 288) -> list[dict]:
         with self._conn() as c:

@@ -79,6 +79,7 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var s5Line: TextView
     private lateinit var s6Line: TextView
     private lateinit var dozeLine: TextView
+    private lateinit var dozeBtn: Button
 
     // ---- soak & recovery (spec: companion-resilience) ----
     private lateinit var soak: SoakStats
@@ -145,7 +146,10 @@ class DebugActivity : AppCompatActivity() {
         })
         dozeLine = TextView(this).apply { caption() }
         col.addView(dozeLine)
-        col.addView(Button(this).apply {
+        // Same system dialog as the main screen's onboarding button —
+        // shown here only while the exemption is MISSING, so the healthy
+        // state is just the ✓ line (owner feedback 2026-08-29).
+        dozeBtn = Button(this).apply {
             text = "Request battery-optimization exemption"
             setOnClickListener {
                 @Suppress("BatteryLife")
@@ -159,7 +163,8 @@ class DebugActivity : AppCompatActivity() {
                         "Open Settings > Battery manually.", Toast.LENGTH_LONG).show()
                 }
             }
-        })
+        }
+        col.addView(dozeBtn)
         @Suppress("UseSwitchCompatOrMaterialCode")
         col.addView(Switch(this).apply {
             text = "Raw HR quality metric (hr-quality-diag firmware ONLY — " +
@@ -346,6 +351,22 @@ class DebugActivity : AppCompatActivity() {
         }
         col.addView(outageBtn)
 
+        // Version footer: the first thing to quote in any bug report.
+        col.addView(TextView(this).apply {
+            caption()
+            setPadding(0, Ui.dp(context, 24), 0, Ui.dp(context, 8))
+            val pi = runCatching {
+                packageManager.getPackageInfo(packageName, 0)
+            }.getOrNull()
+            val code = pi?.let {
+                if (Build.VERSION.SDK_INT >= 28) it.longVersionCode
+                else @Suppress("DEPRECATION") it.versionCode.toLong()
+            } ?: 0
+            text = "Companion v${pi?.versionName ?: "?"} ($code) · " +
+                "${Build.MANUFACTURER} ${Build.MODEL} · " +
+                "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
+        })
+
         val root = ScrollView(this).apply { addView(col) }
         Ui.applySystemInsets(root)
         setContentView(root)
@@ -448,7 +469,10 @@ class DebugActivity : AppCompatActivity() {
         val days = if (resetAt == 0L) 0.0
                    else (System.currentTimeMillis() - resetAt) / 86_400_000.0
         return buildString {
-            append("# cryomonitor soak ${Date()} (${Build.MODEL})\n")
+            val ver = runCatching {
+                packageManager.getPackageInfo(packageName, 0).versionName
+            }.getOrNull() ?: "?"
+            append("# cryomonitor soak ${Date()} (${Build.MODEL}, companion v$ver)\n")
             append("window: ${"%.1f".format(days)} days since " +
                 "${if (resetAt == 0L) "-" else Date(resetAt).toString()}\n")
             append("service starts: boot=${soak.get(SoakStats.STARTS_BOOT)} " +
@@ -735,6 +759,8 @@ class DebugActivity : AppCompatActivity() {
             (if (exact) "Exact alarms: allowed ✓"
              else "Exact alarms: BLOCKED — Settings > Apps > Special " +
                  "app access > Alarms & reminders")
+        dozeBtn.visibility =
+            if (exempt) android.view.View.GONE else android.view.View.VISIBLE
         soakCard.text = renderSoak().lines()
             .filter { it.isNotBlank() && !it.startsWith("#") }
             .joinToString("\n")

@@ -107,25 +107,25 @@ static uint32_t now_ms(void) {
 static uint32_t s_mono_ms;
 static uint32_t mono_ms(void) { return s_mono_ms; }
 
-static uint16_t age_s(uint32_t since_ms) {
+static __attribute__((noinline)) uint16_t age_s(uint32_t since_ms) {
   uint32_t a = (mono_ms() - since_ms) / 1000u;
   return (uint16_t)(a > 9999u ? 9999u : a);
 }
 
 static uint8_t diag_flags(void) {
-  return (uint8_t)((s_core.charging ? CM_DIAG_CHARGING : 0) |
-                   (s_core.lab_hold ? CM_DIAG_LAB_HOLD : 0) |
-                   (s_core.pulse_phase ? CM_DIAG_HUNTING : 0) |
-                   (s_core.notworn_nagged ? CM_DIAG_NAGGED : 0) |
-                   (s_core.ever_pulse ? CM_DIAG_EVER_PULSE : 0) |
-                   (s_core.suspended ? CM_DIAG_SUSPENDED : 0));
+  /* All source fields are normalized booleans (pulse_phase is 0/1).
+   * Shifts compile to straight-line Thumb instructions instead of six
+   * conditional selections. */
+  return (uint8_t)(s_core.charging |
+                   (s_core.lab_hold << 1) |
+                   (s_core.pulse_phase << 2) |
+                   (s_core.notworn_nagged << 3) |
+                   (s_core.ever_pulse << 4) |
+                   (s_core.suspended << 5));
 }
 
-static void push_status_to_app(void) {
-  /* Minutes round UP: a fresh 30-min suspension reads "30", not "29".
-   * data0: stage low byte, charging-hold flag high byte. data1 packs the
-   * M0 spike telemetry (S4 raw HR, S8 heap headroom): low byte = last
-   * raw bpm (capped 255), high byte = free heap / 64 B. */
+static __attribute__((noinline)) void push_status_to_app(void) {
+  /* Minutes round UP: a fresh 30-min suspension reads "30", not "29". */
   uint32_t heap = heap_bytes_free();
   if (heap > 255u * 64u) heap = 255u * 64u;
   /* v2 pack (delivery hardening D4):
@@ -327,12 +327,12 @@ static void battery_handler(BatteryChargeState state) {
 static void log_heartbeat(void) {
   uint32_t heap64 = heap_bytes_free() / 64u;
   if (heap64 > 255u) heap64 = 255u;
+  uint8_t stage = (uint8_t)cm_current_stage(&s_core);
   cm_heartbeat_rec rec = {
     .epoch_s = (uint32_t)time(NULL),
     /* v3: low nibble = stage, high nibble = stage detector */
-    .stage = (uint8_t)(cm_current_stage(&s_core) |
-                       (cm_current_stage(&s_core) != CM_STAGE_NONE
-                            ? (s_core.stage_det << 4) : 0)),
+    .stage = (uint8_t)(stage |
+                       (stage != CM_STAGE_NONE ? (s_core.stage_det << 4) : 0)),
     .battery_pct = battery_state_service_peek().charge_percent,
     .last_bpm = (uint8_t)(s_last_bpm > 255 ? 255 : s_last_bpm),
     .suspended = s_core.suspended,
@@ -343,8 +343,7 @@ static void log_heartbeat(void) {
      * crash risk at the worst moment, so the margin must be a trended
      * number, not an anecdote. */
     .heap64 = (uint8_t)heap64,
-    .episode = (uint16_t)(cm_current_stage(&s_core) != CM_STAGE_NONE
-                              ? s_core.episode : 0),
+    .episode = (uint16_t)(stage != CM_STAGE_NONE ? s_core.episode : 0),
   };
   data_logging_log(s_log_session, &rec, 1);
 }

@@ -1,6 +1,14 @@
 /* Pebble Cryonics Monitor — detector core implementation. See detectors.h. */
 #include "detectors.h"
 
+#if defined(_MSC_VER)
+#define CM_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__)
+#define CM_NOINLINE __attribute__((noinline))
+#else
+#define CM_NOINLINE
+#endif
+
 /* Wrap-safe elapsed time (valid for spans < 2^31 ms ~ 24 days). */
 static uint32_t elapsed(uint32_t now, uint32_t since) { return now - since; }
 
@@ -119,6 +127,18 @@ static void end_pulse_machinery(cm_core *c) {
   c->pulse_phase = 0;
 }
 
+static CM_NOINLINE void schedule_next_checkin(cm_core *c) {
+  c->checkin_due_ms =
+      c->now_ms + (uint32_t)c->cfg.checkin_interval_min * 60000u;
+  c->checkin_reminded = 0;
+}
+
+static CM_NOINLINE void snooze_pulse(cm_core *c) {
+  c->pulse_snooze_until_ms =
+      c->now_ms + (uint32_t)c->cfg.pulse_snooze_min * 60000u;
+  c->pulse_snoozed = 1;
+}
+
 /* Cancel any active alert (does not touch alarm latch unless from user/suspend). */
 static void cancel_alert(cm_core *c, uint8_t reason) {
   if (c->stage == CM_STAGE_NONE) return;
@@ -128,13 +148,11 @@ static void cancel_alert(cm_core *c, uint8_t reason) {
   emit(c, CM_ACT_ALERT_CANCELLED, det, reason, 0);
   if (det == CM_DET_NONMOTION) c->nonmotion_armed = 0; /* re-arm on next motion */
   if (det == CM_DET_PULSE) {
-    c->pulse_snooze_until_ms = c->now_ms + (uint32_t)c->cfg.pulse_snooze_min * 60000u;
-    c->pulse_snoozed = 1;
+    snooze_pulse(c);
   }
   if (det == CM_DET_CHECKIN) {
     /* answered/cancelled: schedule next round */
-    c->checkin_due_ms = c->now_ms + (uint32_t)c->cfg.checkin_interval_min * 60000u;
-    c->checkin_reminded = 0;
+    schedule_next_checkin(c);
   }
 }
 
@@ -187,6 +205,23 @@ static void note_motion(cm_core *c) {
   if (c->pulse_phase == 1) end_pulse_machinery(c);
   /* Motion in the post-impact settle window is handled in cm_tick via
    * last_motion_ms; nothing to do here. */
+}
+
+/* Shared by every transition that resumes detector timing. Outlining these
+ * four stores is smaller than repeating them at five call sites. */
+static CM_NOINLINE void reset_baselines(cm_core *c, uint32_t now_ms) {
+  c->last_motion_ms = now_ms;
+  c->last_pulse_ms = now_ms;
+  c->last_bpm_change_ms = now_ms;
+  c->impact_phase = 0;
+}
+
+static CM_NOINLINE void begin_detector_hold(cm_core *c) {
+  if (c->stage != CM_STAGE_NONE && c->stage != CM_STAGE_ALARM) {
+    cancel_alert(c, CM_CANCEL_SUSPEND);
+  }
+  c->impact_phase = 0;
+  c->pulse_phase = 0;
 }
 
 void cm_accel_feed(cm_core *c, const cm_accel_sample *s, uint32_t n, uint32_t now_ms) {
@@ -277,10 +312,7 @@ static void tick_suspension(cm_core *c) {
   if ((int32_t)(c->suspend_until_ms - c->now_ms) <= 0) {
     c->suspended = 0;
     /* fresh baselines: no instant triggers on resume */
-    c->last_motion_ms = c->now_ms;
-    c->last_pulse_ms = c->now_ms;
-    c->last_bpm_change_ms = c->now_ms;
-    c->impact_phase = 0;
+    reset_baselines(c, c->now_ms);
     c->sensor_nagged = 0; /* post-suspension blindness is a new episode */
     emit(c, CM_ACT_SUSPEND_EXPIRED, 0, 0, 0);
     return;
@@ -319,10 +351,7 @@ static void tick_suspension(cm_core *c) {
       }
       if (pulse_ok) {
         c->suspended = 0;
-        c->last_motion_ms = c->now_ms;
-        c->last_pulse_ms = c->now_ms;
-        c->last_bpm_change_ms = c->now_ms;
-        c->impact_phase = 0;
+        reset_baselines(c, c->now_ms);
         emit(c, CM_ACT_AUTO_RESUMED, 0, 0, 0);
       }
     }
@@ -521,12 +550,10 @@ void cm_user_ok(cm_core *c, uint32_t now_ms) {
     c->stage = CM_STAGE_NONE;
     emit(c, CM_ACT_ALERT_CANCELLED, det, CM_CANCEL_USER, 0);
     if (det == CM_DET_PULSE) {
-      c->pulse_snooze_until_ms = now_ms + (uint32_t)c->cfg.pulse_snooze_min * 60000u;
-      c->pulse_snoozed = 1;
+      snooze_pulse(c);
     }
     if (det == CM_DET_CHECKIN) {
-      c->checkin_due_ms = now_ms + (uint32_t)c->cfg.checkin_interval_min * 60000u;
-      c->checkin_reminded = 0;
+      schedule_next_checkin(c);
     }
     return;
   }
@@ -536,8 +563,7 @@ void cm_user_ok(cm_core *c, uint32_t now_ms) {
   }
   /* No alert active: treat as an early scheduled check-in. */
   if (c->cfg.enabled[CM_DET_CHECKIN]) {
-    c->checkin_due_ms = now_ms + (uint32_t)c->cfg.checkin_interval_min * 60000u;
-    c->checkin_reminded = 0;
+    schedule_next_checkin(c);
   }
 }
 
@@ -574,19 +600,12 @@ void cm_set_charging(cm_core *c, int charging, uint32_t now_ms) {
      * an implicit suspension. Pre-alarm stages cancel like a suspension
      * would; a latched ALARM stays latched — charging must never clear
      * an alarm someone may already be responding to. */
-    if (c->stage != CM_STAGE_NONE && c->stage != CM_STAGE_ALARM) {
-      cancel_alert(c, CM_CANCEL_SUSPEND);
-    }
-    c->impact_phase = 0;
-    c->pulse_phase = 0;
+    begin_detector_hold(c);
     emit(c, CM_ACT_CHARGING_STARTED, 0, 0, 1);
   } else {
     /* fresh baselines: the stillness and pulse-absence accumulated on
      * the charger must not fire the instant it comes off */
-    c->last_motion_ms = now_ms;
-    c->last_pulse_ms = now_ms;
-    c->last_bpm_change_ms = now_ms;
-    c->impact_phase = 0;
+    reset_baselines(c, now_ms);
     c->notworn_nagged = 0;
     c->sensor_nagged = 0;
     c->nonmotion_armed = 1;
@@ -604,16 +623,9 @@ void cm_set_lab_hold(cm_core *c, int hold, uint32_t now_ms) {
   c->now_ms = now_ms;
   c->lab_hold = on;
   if (on) {
-    if (c->stage != CM_STAGE_NONE && c->stage != CM_STAGE_ALARM) {
-      cancel_alert(c, CM_CANCEL_SUSPEND);
-    }
-    c->impact_phase = 0;
-    c->pulse_phase = 0;
+    begin_detector_hold(c);
   } else {
-    c->last_motion_ms = now_ms;
-    c->last_pulse_ms = now_ms;
-    c->last_bpm_change_ms = now_ms;
-    c->impact_phase = 0;
+    reset_baselines(c, now_ms);
     c->notworn_nagged = 0;
     c->sensor_nagged = 0;
     c->nonmotion_armed = 1;
@@ -624,37 +636,9 @@ void cm_resume(cm_core *c, uint32_t now_ms) {
   c->now_ms = now_ms;
   if (!c->suspended) return;
   c->suspended = 0;
-  c->last_motion_ms = now_ms;
-  c->last_pulse_ms = now_ms;
-  c->last_bpm_change_ms = now_ms;
-  c->impact_phase = 0;
+  reset_baselines(c, now_ms);
   c->sensor_nagged = 0;
   emit(c, CM_ACT_AUTO_RESUMED, 0, 0, 0);
-}
-
-/* Re-sync the suspension deadline after a wall-clock correction: the
- * shell owns wall-clock semantics; this just moves the mono deadline. */
-void cm_suspend_sync_remaining(cm_core *c, uint32_t remaining_s, uint32_t now_ms) {
-  if (!c->suspended) return;
-  c->now_ms = now_ms;
-  c->suspend_until_ms = now_ms + remaining_s * 1000u;
-}
-
-cm_stage cm_current_stage(const cm_core *c) { return (cm_stage)c->stage; }
-
-uint32_t cm_stage_remaining_s(const cm_core *c, uint32_t now_ms) {
-  uint32_t len_s;
-  if (c->stage == CM_STAGE_CHECKIN) len_s = c->cfg.checkin_ui_s;
-  else if (c->stage == CM_STAGE_COUNTDOWN) len_s = countdown_len(c, c->stage_det);
-  else return 0;
-  uint32_t el = elapsed(now_ms, c->stage_start_ms) / 1000u;
-  return el >= len_s ? 0 : len_s - el;
-}
-
-uint32_t cm_suspend_remaining_s(const cm_core *c, uint32_t now_ms) {
-  if (!c->suspended) return 0;
-  int32_t d = (int32_t)(c->suspend_until_ms - now_ms);
-  return d > 0 ? (uint32_t)d / 1000u : 0;
 }
 
 uint32_t cm_checkin_due_in_s(const cm_core *c, uint32_t now_ms) {

@@ -181,66 +181,64 @@ typedef struct {
 
   /* action queue (ring buffer) */
   cm_action q[8];
-  uint8_t q_head, q_len, q_overflow;
+  uint8_t q_head, q_len;
+
+  /* Keep 32-bit runtime fields together. cm_core is never persisted or
+   * sent over the wire, so ordering by alignment removes RAM padding
+   * without changing any durable format. */
 
   /* time */
   uint32_t now_ms;
-  uint8_t  hour;
 
   /* motion tracking */
   uint32_t last_motion_ms;
-  uint16_t prev_mag;
-  uint8_t  have_prev_mag;
-  uint8_t  motion_this_second;
 
   /* pulse tracking */
   uint32_t last_pulse_ms;         /* last valid READING (worn evidence) */
-  uint16_t last_bpm_value;
   uint32_t last_bpm_change_ms;    /* last value CHANGE (liveness evidence) */
-  uint8_t  ever_pulse;
-  uint8_t  pulse_phase;          /* 0 idle, 1 hunting */
   uint32_t hunt_start_ms;
   uint32_t pulse_snooze_until_ms;
-  uint8_t  pulse_snoozed;
 
   /* impact tracking */
-  uint8_t  impact_phase;         /* 0 none, 1 freefall seen, 2 awaiting immobility */
   uint32_t freefall_ms;
   uint32_t impact_ms;
 
   /* alert ladder */
-  uint8_t  stage;                /* cm_stage */
-  uint8_t  stage_det;            /* cm_detector */
   uint32_t stage_start_ms;
-  uint16_t episode_seq;          /* last minted episode id (shell seeds from
-                                    persist so ids survive restarts) */
-  uint16_t episode;              /* current/most recent episode id */
 
   /* scheduled check-in */
   uint32_t checkin_due_ms;
-  uint8_t  checkin_reminded;
-
-  /* not-worn */
-  uint8_t  notworn_nagged;
-
-  /* sensor fault (re-armed by a bpm change, never by motion) */
-  uint8_t  sensor_nagged;
-
-  /* non-motion refire guard */
-  uint8_t  nonmotion_armed;
 
   /* suspension */
-  uint8_t  suspended;
   uint32_t suspend_start_ms;
   uint32_t suspend_until_ms;
-  uint8_t  suspend_auto_resume;
+
+  /* 16-bit runtime fields. */
+  uint16_t prev_mag;
+  uint16_t last_bpm_value;
+  uint16_t episode_seq;          /* last minted episode id (shell seeds from
+                                    persist so ids survive restarts) */
+  uint16_t episode;              /* current/most recent episode id */
   uint16_t suspend_motion_run_s;
 
-  /* charging hold: watch on the charger = deliberate off-wrist */
+  /* Byte-sized runtime state. */
+  uint8_t  q_overflow;
+  uint8_t  hour;
+  uint8_t  have_prev_mag;
+  uint8_t  motion_this_second;
+  uint8_t  ever_pulse;
+  uint8_t  pulse_phase;          /* 0 idle, 1 hunting */
+  uint8_t  pulse_snoozed;
+  uint8_t  impact_phase;         /* 0 none, 1 freefall seen, 2 awaiting immobility */
+  uint8_t  stage;                /* cm_stage */
+  uint8_t  stage_det;            /* cm_detector */
+  uint8_t  checkin_reminded;
+  uint8_t  notworn_nagged;
+  uint8_t  sensor_nagged;        /* re-armed by bpm change, never by motion */
+  uint8_t  nonmotion_armed;
+  uint8_t  suspended;
+  uint8_t  suspend_auto_resume;
   uint8_t  charging;
-
-  /* sensor-lab hold: guided S4 test drives the sensors deliberately —
-   * detectors must not interpret the test as an emergency */
   uint8_t  lab_hold;
 } cm_core;
 
@@ -266,15 +264,39 @@ void cm_set_lab_hold(cm_core *c, int hold, uint32_t now_ms);
 int cm_next_action(cm_core *c, cm_action *out);
 
 /* UI helpers */
-cm_stage cm_current_stage(const cm_core *c);
+static inline cm_stage cm_current_stage(const cm_core *c) {
+  return (cm_stage)c->stage;
+}
 
 //! Seconds left in the current CHECKIN/COUNTDOWN stage (0 otherwise).
-uint32_t cm_stage_remaining_s(const cm_core *c, uint32_t now_ms);
+static inline uint32_t cm_stage_remaining_s(const cm_core *c, uint32_t now_ms) {
+  uint32_t len_s;
+  if (c->stage == CM_STAGE_CHECKIN) {
+    len_s = c->cfg.checkin_ui_s;
+  } else if (c->stage == CM_STAGE_COUNTDOWN) {
+    len_s = c->stage_det == CM_DET_IMPACT ? c->cfg.countdown_impact_s
+          : c->stage_det == CM_DET_SOS ? c->cfg.countdown_sos_s
+                                       : c->cfg.countdown_s;
+  } else {
+    return 0;
+  }
+  uint32_t el = (now_ms - c->stage_start_ms) / 1000u;
+  return el >= len_s ? 0 : len_s - el;
+}
 
 //! Re-sync the suspension deadline (shell wall-clock policy) - no-op
 //! unless suspended.
-void cm_suspend_sync_remaining(cm_core *c, uint32_t remaining_s, uint32_t now_ms);
-uint32_t cm_suspend_remaining_s(const cm_core *c, uint32_t now_ms);
+static inline void cm_suspend_sync_remaining(cm_core *c, uint32_t remaining_s,
+                                             uint32_t now_ms) {
+  if (!c->suspended) return;
+  c->now_ms = now_ms;
+  c->suspend_until_ms = now_ms + remaining_s * 1000u;
+}
+static inline uint32_t cm_suspend_remaining_s(const cm_core *c, uint32_t now_ms) {
+  if (!c->suspended) return 0;
+  int32_t d = (int32_t)(c->suspend_until_ms - now_ms);
+  return d > 0 ? (uint32_t)d / 1000u : 0;
+}
 uint32_t cm_checkin_due_in_s(const cm_core *c, uint32_t now_ms);
 
 #ifdef __cplusplus

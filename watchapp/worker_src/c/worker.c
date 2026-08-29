@@ -29,15 +29,33 @@ static DataLoggingSessionRef s_log_session;
 /* ---- debug mode (toggled from the phone; view with `pebble logs`) ---- */
 static uint8_t s_debug;
 static uint8_t s_qmetric; /* diag firmware confirmed: gate liveness on quality */
+#if CM_WORKER_VERBOSE
 static uint16_t s_dbg_motion_events;   /* per-minute counters */
 static uint16_t s_dbg_last_mag;
 static uint16_t s_dbg_last_bpm;
 static uint16_t s_dbg_hr_updates;
+#endif
 
+/* Worker code+strings share the 10.5 kB RAM budget with the heap: every
+ * format string here costs heap bytes on every wearer's wrist. Verbose
+ * logging therefore compiles OUT by default (heap crisis 2026-08-29:
+ * 192 B free). Build with -DCM_WORKER_VERBOSE=1 for a debug .pbw;
+ * WARNING/ERROR logs always stay. */
+#ifndef CM_WORKER_VERBOSE
+#define CM_WORKER_VERBOSE 0
+#endif
+#if CM_WORKER_VERBOSE
+#define WLOG(...) APP_LOG(APP_LOG_LEVEL_INFO, __VA_ARGS__)
 #define DLOG(...) do { \
     if (s_debug) APP_LOG(APP_LOG_LEVEL_DEBUG, __VA_ARGS__); \
   } while (0)
+#else
+#define WLOG(...) ((void)0)
+#define DLOG(...) ((void)0)
+#endif
 
+#if CM_WORKER_VERBOSE
+#if CM_WORKER_VERBOSE
 static const char *action_name(uint8_t t) {
   switch (t) {
     case CM_ACT_HR_BURST_ON:      return "HR_BURST_ON";
@@ -54,6 +72,8 @@ static const char *action_name(uint8_t t) {
     default:                      return "?";
   }
 }
+#endif
+#endif
 
 /* Heartbeat record v2 for DataLogging (phone-side watchdog + audit
  * trail + remote detector diagnostics — tag CM_DL_TAG, 14 bytes). */
@@ -191,13 +211,13 @@ static void drain_actions(void) {
        * taking the screen for the nag is the point — otherwise the nag
        * is invisible in worker mode (the worker cannot vibrate). */
       case CM_ACT_NOTWORN_NAG:
-        APP_LOG(APP_LOG_LEVEL_INFO, "NOTWORN nag -> launching app");
+        WLOG("NOTWORN nag -> launching app");
         notify_app(&a, true);
         break;
       /* Pulse monitoring is blind while the wearer moves: the wearer must
        * see the reboot/suspend guidance, so take the screen. */
       case CM_ACT_SENSOR_FAULT:
-        APP_LOG(APP_LOG_LEVEL_INFO, "SENSOR fault -> launching app");
+        WLOG("SENSOR fault -> launching app");
         notify_app(&a, true);
         break;
 
@@ -255,10 +275,12 @@ static void accel_handler(AccelData *data, uint32_t num_samples) {
   }
   uint32_t motion_before = s_core.last_motion_ms;
   cm_accel_feed(&s_core, s, n, mono_ms());
+#if CM_WORKER_VERBOSE
   if (s_debug) {
     if (s_core.last_motion_ms != motion_before) s_dbg_motion_events++;
     s_dbg_last_mag = s_core.prev_mag;
   }
+#endif
   drain_actions();
 }
 
@@ -282,11 +304,13 @@ static void health_handler(HealthEventType event, void *context) {
     }
     s_last_bpm = bpm > 0 ? (uint16_t)bpm : 0;
     s_last_hr_event_ms = mono_ms();
+#if CM_WORKER_VERBOSE
     if (s_debug) {
       s_dbg_hr_updates++;
       s_dbg_last_bpm = s_last_bpm;
       DLOG("hr raw=%d burst=%u", (int)bpm, s_hr_burst_active);
     }
+#endif
     cm_hr_feed(&s_core, bpm > 0 ? (uint16_t)bpm : 0, mono_ms());
     drain_actions();
   }
@@ -358,7 +382,7 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
     persist_write_int(PK_DRILL_ARM_MS, (int32_t)s_drill_arm_ms);
     persist_write_int(PK_DRILL_FIRE_MS, (int32_t)now_ms());
     notify_app(&a, true);
-    APP_LOG(APP_LOG_LEVEL_INFO, "latency drill fired");
+    WLOG("latency drill fired");
   }
 
   /* S4 sensor lab: every 2 s relay the raw peek value, the event age,
@@ -410,6 +434,7 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   if (--s_heartbeat_countdown == 0) {
     s_heartbeat_countdown = CM_HEARTBEAT_INTERVAL_S;
     log_heartbeat();
+#if CM_WORKER_VERBOSE
     if (s_debug) {
       DLOG("min: stage=%u susp=%u motion_evts=%u mag=%u bpm=%u hr_upd=%u heap_free=%u",
            (unsigned)cm_current_stage(&s_core), s_core.suspended,
@@ -418,6 +443,7 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
       s_dbg_motion_events = 0;
       s_dbg_hr_updates = 0;
     }
+#endif
   }
 }
 
@@ -439,7 +465,7 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
     case WMSG_DRILL:
       s_drill_countdown = CM_DRILL_DELAY_S;
       s_drill_arm_ms = now_ms();
-      APP_LOG(APP_LOG_LEVEL_INFO, "latency drill armed (%us)", CM_DRILL_DELAY_S);
+      WLOG("latency drill armed (%us)", CM_DRILL_DELAY_S);
       break;
     case WMSG_HR_LAB:
       s_hr_lab = (uint8_t)m->data0;
@@ -447,17 +473,17 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
       cm_set_lab_hold(&s_core, s_hr_lab, mono_ms());
       drain_actions();
       set_hr_burst(s_hr_lab != 0); /* 1 s sampling for the lab duration */
-      APP_LOG(APP_LOG_LEVEL_INFO, "hr lab %s", s_hr_lab ? "ON" : "off");
+      WLOG("hr lab %s", s_hr_lab ? "ON" : "off");
       break;
     case WMSG_SET_DEBUG:
       s_debug = (uint8_t)m->data0;
       persist_write_int(PK_DEBUG, s_debug);
-      APP_LOG(APP_LOG_LEVEL_INFO, "worker debug %s", s_debug ? "ON" : "off");
+      WLOG("worker debug %s", s_debug ? "ON" : "off");
       break;
     case WMSG_SET_QMETRIC:
       s_qmetric = (uint8_t)m->data0;
       persist_write_int(PK_QMETRIC, s_qmetric);
-      APP_LOG(APP_LOG_LEVEL_INFO, "quality gate %s", s_qmetric ? "ON" : "off");
+      WLOG("quality gate %s", s_qmetric ? "ON" : "off");
       break;
     default: break;
   }
@@ -507,11 +533,13 @@ static void init(void) {
   s_qmetric = persist_exists(PK_QMETRIC) ? (uint8_t)persist_read_int(PK_QMETRIC) : 0;
   s_core.episode_seq = persist_exists(PK_EPISODE_SEQ)
       ? (uint16_t)persist_read_int(PK_EPISODE_SEQ) : 0;
+#if CM_WORKER_VERBOSE
   if (s_debug) {
     APP_LOG(APP_LOG_LEVEL_INFO,
             "worker up (debug ON) hr=%u heap_free=%u",
             cfg.hr_available, (unsigned)heap_bytes_free());
   }
+#endif
   restore_suspension();
 
   accel_service_set_sampling_rate(ACCEL_SAMPLING_25HZ);

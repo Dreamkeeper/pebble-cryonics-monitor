@@ -28,6 +28,7 @@ static DataLoggingSessionRef s_log_session;
 
 /* ---- debug mode (toggled from the phone; view with `pebble logs`) ---- */
 static uint8_t s_debug;
+static uint8_t s_qmetric; /* diag firmware confirmed: gate liveness on quality */
 static uint16_t s_dbg_motion_events;   /* per-minute counters */
 static uint16_t s_dbg_last_mag;
 static uint16_t s_dbg_last_bpm;
@@ -241,6 +242,20 @@ static void accel_handler(AccelData *data, uint32_t num_samples) {
 static void health_handler(HealthEventType event, void *context) {
   if (event == HealthEventHeartRateUpdate || event == HealthEventSignificantUpdate) {
     HealthValue bpm = health_service_peek_current_value(HealthMetricHeartRateRawBPM);
+    /* Quality gate (lab 2026-08-29, n=450+): worn readings never fall
+     * below Acceptable (loose strap included), while ambient-light noise
+     * that fools the wear classifier is the only way a nonzero bpm can
+     * reach us off-body. When the diag firmware's raw-quality metric is
+     * available (phone-confirmed — stock firmware asserts on the unknown
+     * metric), a sub-Acceptable reading counts as NO signal for
+     * liveness/resume. Lab streaming stays raw. */
+    if (s_qmetric && bpm > 0) {
+      HealthValue q = health_service_peek_current_value((HealthMetric)9);
+      if (q < 2 /* HRMQuality_Acceptable */) {
+        DLOG("hr raw=%d gated: quality=%d", (int)bpm, (int)q);
+        bpm = 0;
+      }
+    }
     s_last_bpm = bpm > 0 ? (uint16_t)bpm : 0;
     s_last_hr_event_ms = now_ms();
     if (s_debug) {
@@ -384,6 +399,11 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
       persist_write_int(PK_DEBUG, s_debug);
       APP_LOG(APP_LOG_LEVEL_INFO, "worker debug %s", s_debug ? "ON" : "off");
       break;
+    case WMSG_SET_QMETRIC:
+      s_qmetric = (uint8_t)m->data0;
+      persist_write_int(PK_QMETRIC, s_qmetric);
+      APP_LOG(APP_LOG_LEVEL_INFO, "quality gate %s", s_qmetric ? "ON" : "off");
+      break;
     default: break;
   }
   DLOG("wmsg type=%u d0=%u", type, m->data0);
@@ -429,6 +449,7 @@ static void init(void) {
   load_config(&cfg);
   cm_init(&s_core, &cfg, now_ms());
   s_debug = persist_exists(PK_DEBUG) ? (uint8_t)persist_read_int(PK_DEBUG) : 0;
+  s_qmetric = persist_exists(PK_QMETRIC) ? (uint8_t)persist_read_int(PK_QMETRIC) : 0;
   if (s_debug) {
     APP_LOG(APP_LOG_LEVEL_INFO,
             "worker up (debug ON) hr=%u heap_free=%u",

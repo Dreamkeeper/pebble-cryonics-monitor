@@ -144,10 +144,18 @@ class DebugActivity : AppCompatActivity() {
         })
         @Suppress("UseSwitchCompatOrMaterialCode")
         col.addView(Switch(this).apply {
-            text = "Lab reads raw HR quality (hr-quality-diag firmware " +
-                "ONLY — the watchapp crashes mid-lab on stock firmware)"
+            text = "Raw HR quality metric (hr-quality-diag firmware ONLY — " +
+                "the watchapp crashes on stock firmware). Enables the " +
+                "liveness quality gate and per-sample quality in the lab."
             isChecked = settings.labQualityMetric
-            setOnCheckedChangeListener { _, on -> settings.labQualityMetric = on }
+            setOnCheckedChangeListener { _, on ->
+                settings.labQualityMetric = on
+                // Push to the worker now (also re-synced on every watchapp
+                // heartbeat, since AppMessage needs an open inbox).
+                startService(Intent(this@DebugActivity, MonitorService::class.java)
+                    .setAction(MonitorService.ACTION_SET_QMETRIC)
+                    .putExtra("enabled", on))
+            }
         })
 
         header("S1 — alarm-path latency drill")
@@ -724,22 +732,27 @@ class DebugActivity : AppCompatActivity() {
                         (it[1].toIntOrNull() ?: return@mapNotNull null)
                 }
             }
-        s6Line.text = if (pts.size < 2)
-            "Collecting watch-battery points (have ${pts.size}; need a " +
-            "charge-free day of wear). Also on the dashboard battery trail."
+        // Sum only DESCENDING segments: any rise = a charge, and naive
+        // first-minus-last across a charge inflates the projection
+        // wildly (field: "62.9 days" from a window with a charge in it).
+        var dropPct = 0
+        var dischargeH = 0.0
+        for (i in 1 until pts.size) {
+            val dt = (pts[i].first - pts[i - 1].first) / 3600.0
+            val dp = pts[i - 1].second - pts[i].second
+            if (dp > 0 && dt < 48) { dropPct += dp; dischargeH += dt }
+        }
+        s6Line.text = if (dropPct == 0 || dischargeH < 6)
+            "Collecting discharge data (${dropPct}% over " +
+            "${"%.1f".format(dischargeH)} h so far; charge segments " +
+            "excluded; need ≥6 h). Also on the dashboard battery trail."
         else {
-            val spanH = (pts.last().first - pts.first().first) / 3600.0
-            val drop = pts.first().second - pts.last().second
-            if (spanH < 1 || drop <= 0)
-                "${pts.size} points over ${"%.1f".format(spanH)} h — need " +
-                "a longer charge-free stretch for a drain estimate."
-            else {
-                val perH = drop / spanH
-                "${"%.2f".format(perH)} %/h over ${"%.1f".format(spanH)} h " +
-                    "→ ${"%.1f".format(100 / perH / 24)} days projected " +
-                    if (100 / perH / 24 >= 7) "→ GO (gate ≥7 days)"
-                    else "→ under the 7-day gate"
-            }
+            val perH = dropPct / dischargeH
+            "${"%.2f".format(perH)} %/h over ${"%.1f".format(dischargeH)} h " +
+                "of discharge (charging excluded) → " +
+                "${"%.1f".format(100 / perH / 24)} days projected " +
+                if (100 / perH / 24 >= 7) "→ GO (gate ≥7 days)"
+                else "→ under the 7-day gate"
         }
     }
 }

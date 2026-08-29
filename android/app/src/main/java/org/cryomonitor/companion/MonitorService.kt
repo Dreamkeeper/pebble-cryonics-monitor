@@ -138,6 +138,10 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_SET_DEBUG,
                     PebbleTransport.KEY_SECONDS to
                         (if (settings.debugLogging) 1 else 0)))
+                watchLink.send(mapOf(
+                    PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_SET_QMETRIC,
+                    PebbleTransport.KEY_SECONDS to
+                        (if (settings.labQualityMetric) 1 else 0)))
                 if (labActive) watchLink.send(mapOf(
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_HR_LAB,
                     PebbleTransport.KEY_SECONDS to labModeValue()))
@@ -607,6 +611,14 @@ class MonitorService : Service(), PebbleTransport.Listener {
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_SET_DEBUG,
                     PebbleTransport.KEY_SECONDS to (if (on) 1 else 0)))
             }
+            ACTION_SET_QMETRIC -> {
+                val on = intent.getBooleanExtra("enabled", false)
+                CmLog.i(TAG, "quality gate ${if (on) "ENABLED" else "disabled"} " +
+                    "(pushing to watch)")
+                watchLink.send(mapOf(
+                    PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_SET_QMETRIC,
+                    PebbleTransport.KEY_SECONDS to (if (on) 1 else 0)))
+            }
         }
         return START_STICKY
     }
@@ -740,6 +752,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
         const val ACTION_TEST_ALARM = "org.cryomonitor.TEST_ALARM"
         const val ACTION_ALERT_CANCELLED = "org.cryomonitor.ALERT_CANCELLED"
         const val ACTION_SET_DEBUG = "org.cryomonitor.SET_DEBUG"
+        const val ACTION_SET_QMETRIC = "org.cryomonitor.SET_QMETRIC"
         const val ACTION_HEARTBEAT_NOW = "org.cryomonitor.HEARTBEAT_NOW"
         const val ACTION_LATENCY_DRILL = "org.cryomonitor.LATENCY_DRILL"
         const val ACTION_WORKER_HEARTBEAT = "org.cryomonitor.WORKER_HEARTBEAT"

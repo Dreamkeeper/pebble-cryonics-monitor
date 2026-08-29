@@ -31,3 +31,21 @@
 - [ ] 10. Owner: flip "Lab reads raw HR quality" on, sideload the diag
        .pbz + 0.4.10 + 0.5.3, run the 7-stage lab. Data decides the
        liveness quality gate and feeds the upstream Goodix issue.
+- [x] 10. Lab run 2026-08-29 (owner, diag firmware): worn floor =
+       Acceptable (A×1 G×17 E×18 moving; E when still/loose); ALL four
+       off-body conditions incl. air_dangle read OffWrist, bpm 0.
+       Yesterday's dangle noise did not reproduce (lighting-dependent)
+       — Goodix upstream issue on the soak watchlist, not filed.
+       Filtered bpm serves stale medians off-body (filtNonzero=100%
+       everywhere) — useless as a gate, as suspected.
+- [x] 11. Liveness quality gate (from the lab data): with the diag
+       firmware confirmed (companion switch -> PMSG_SET_QMETRIC=17 ->
+       PK_QMETRIC, resynced on every watchapp heartbeat), the worker
+       treats sub-Acceptable readings as no-signal for liveness and
+       resume; lab streaming stays raw. Watch 0.4.11, companion 0.5.4.
+- [x] 12. S6 estimator honesty (owner report: 62.9d was fiction): drain
+       now sums only descending segments (charges excluded, >48h gaps
+       dropped), needs >=6h of discharge before projecting.
+- [ ] 13. Owner: install 0.4.11 + 0.5.4, keep the quality switch ON,
+       verify carry/bag/resume behavior and the corrected S6 figure
+       after a charge-free stretch.

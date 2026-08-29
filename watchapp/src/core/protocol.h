@@ -22,9 +22,11 @@ enum {
   PK_BUILD_ID = 9,        /* hash of the app build: a running worker survives
                              a sideload executing the OLD binary — the app
                              kills and relaunches it when the build changes */
-  PK_PENDING_ACTION_T = 10 /* epoch seconds the pending action was parked:
-                              the app discards stale parked actions instead
-                              of replaying yesterday's nag after a reboot */
+  PK_PENDING_ACTION_T = 10, /* epoch seconds the pending action was parked:
+                               the app discards stale parked actions instead
+                               of replaying yesterday's nag after a reboot */
+  PK_QMETRIC = 11         /* 0/1: raw-quality metric available (diag fw) —
+                             worker gates liveness on quality >= Acceptable */
 };
 
 /* AppWorkerMessage types (uint8). data0/data1/data2 per type. */
@@ -45,6 +47,7 @@ enum {
   WMSG_HR_SAMPLE = 11,    /* worker->app (lab only, every 2 s):
                              data0 = raw peek bpm, data1 = free heap / 64 B,
                              data2 = seconds since last HR event */
+  WMSG_SET_QMETRIC = 13,  /* app->worker: data0 = 0/1 — quality metric OK */
   WMSG_DIAG = 12          /* worker->app (debug only, with each status):
                              data0 = s since last bpm CHANGE (cap 9999),
                              data1 = s since last motion (cap 9999),
@@ -83,9 +86,14 @@ enum {
                              sensor lab (forwarded to the worker) */
   PMSG_HR_SAMPLE = 15,    /* watch->phone: SECONDS = raw bpm, HEARTBEAT_SEQ =
                              seconds since last HR event, DETECTOR = heap/64 */
-  PMSG_SENSOR_FAULT = 16  /* watch->phone: no pulse signal while motion
+  PMSG_SENSOR_FAULT = 16, /* watch->phone: no pulse signal while motion
                              continues — sensor dead or carried off-wrist
                              (wearer-only FAULT, never contacts) */
+  PMSG_SET_QMETRIC = 17   /* phone->watch: SECONDS 0/1 — the hr-quality-diag
+                             firmware is installed, so the worker may gate
+                             liveness on the raw-quality metric (lab data
+                             2026-08-29: worn floor = Acceptable; all
+                             off-body conditions read OffWrist) */
 };
 
 /* S1 latency drill: the worker waits this long after the app closes before

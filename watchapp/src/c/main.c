@@ -106,6 +106,12 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
       set_debug(v && v->value->uint16 ? 1 : 0);
       break;
     }
+    case PMSG_SET_QMETRIC: {
+      Tuple *v = dict_find(iter, MESSAGE_KEY_SECONDS);
+      AppWorkerMessage m = {.data0 = (uint16_t)(v && v->value->uint16 ? 1 : 0)};
+      app_worker_send_message(WMSG_SET_QMETRIC, &m);
+      break;
+    }
     case PMSG_CONFIG: {
       Tuple *blob = dict_find(iter, MESSAGE_KEY_CFG_BLOB);
       if (blob && blob->length == sizeof(cm_config)) {

@@ -129,6 +129,11 @@ class Escalation:
         self.resolved = True
         self.resolution = resolution
 
+    def alerted_contacts(self) -> list[Contact]:
+        """Contacts that were actually sent at least one message — the set
+        that deserves a recovery/all-clear follow-up."""
+        return [cs.contact for cs in self._contacts if cs.attempts > 0]
+
     @property
     def any_ack(self) -> bool:
         return any(cs.acked for cs in self._contacts) or bool(self._operator_acks)

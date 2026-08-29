@@ -174,3 +174,27 @@ def test_phone_silent_advisory_created_once(appenv):
     assert len(advisories) == 1
     texts = [txt for _, txt, *_ in appenv.fakes["telegram"].sent]
     assert any("ADVISORY" in t for t in texts)
+
+
+def test_phone_recovery_resolves_and_notifies(appenv):
+    _setup_contacts(appenv)
+    t0 = time.time()
+    appenv.main.get_monitor("default").heartbeat(t0, 80)
+    _cycle(appenv, t0)
+    _cycle(appenv, t0 + 2000)   # silent: advisory fires
+    sent_before = len(appenv.fakes["telegram"].sent)
+    assert sent_before >= 1
+    # phone returns: advisory auto-resolves, alerted contacts get an
+    # all-clear, and nobody is messaged twice on later cycles
+    appenv.main.get_monitor("default").heartbeat(t0 + 2100, 80)
+    _cycle(appenv, t0 + 2100)
+    advisories = [e for _, e in appenv.main.escalations.values()
+                  if e.kind.value == "phone_silent"]
+    assert len(advisories) == 1
+    assert advisories[0].resolved
+    assert advisories[0].resolution == "recovered"
+    texts = [txt for _, txt, *_ in appenv.fakes["telegram"].sent]
+    assert any("RECOVERED" in t for t in texts)
+    count_after = len(appenv.fakes["telegram"].sent)
+    _cycle(appenv, t0 + 2200)
+    assert len(appenv.fakes["telegram"].sent) == count_after

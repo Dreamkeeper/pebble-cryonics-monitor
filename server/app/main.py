@@ -308,6 +308,30 @@ async def _deliver(channel, address: str, text: str, ack_url, ack_token) -> bool
                                    ack_url, ack_token)
 
 
+async def _notify_phone_recovered(wid: str, t: float) -> None:
+    for esc_id, (ewid, esc) in list(escalations.items()):
+        if ewid != wid or esc.kind != AlertKind.PHONE_SILENT or esc.resolved:
+            continue
+        esc.resolve("recovered")
+        _persist_escalation(esc_id)
+        db.add_event(wid, "escalation_resolved",
+                     {"id": esc_id, "resolution": "recovered"})
+        wearer = db.get_wearer(wid) or {"name": wid}
+        mins = max(1, int((t - esc.started_t) / 60))
+        text = (f"RECOVERED: {wearer['name']}'s phone is back online "
+                f"(silent advisory cleared after ~{mins} min). "
+                f"No action needed.\nRef: {esc_id}")
+        for contact in esc.alerted_contacts():
+            for ch_name, address in contact.addresses:
+                channel = CHANNELS.get(ch_name)
+                if channel is None or not address:
+                    continue
+                ok = await _deliver(channel, address, text, None, None)
+                db.add_event(wid, "recovery_notify",
+                             {"id": esc_id, "contact": contact.id,
+                              "channel": ch_name, "delivered": ok})
+
+
 async def pump_cycle(now: float | None = None) -> None:
     t = now if now is not None else time.time()
 
@@ -327,6 +351,12 @@ async def pump_cycle(now: float | None = None) -> None:
         if (state == PhoneState.SILENT and prev != PhoneState.SILENT
                 and not _has_open(wid, AlertKind.PHONE_SILENT)):
             create_escalation(wid, AlertKind.PHONE_SILENT, "phone_silent", "", t)
+        if state != PhoneState.SILENT and prev == PhoneState.SILENT:
+            # Phone recovered: an advisory without an all-clear leaves the
+            # responder wondering (field 2026-08-29). Auto-resolve the open
+            # PHONE_SILENT escalation and follow up to everyone who was
+            # actually messaged.
+            await _notify_phone_recovered(wid, t)
         _prev_states[wid] = state
 
     # escalation delivery

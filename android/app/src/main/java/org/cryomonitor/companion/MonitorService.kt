@@ -87,7 +87,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
         selfHealLaunch("service start") // also relaunches the background worker
 
         scope.launch { watchdogLoop() }
-        scope.launch { serverHeartbeatLoop() }
+        scheduleHeartbeat(5_000)
     }
 
     /**
@@ -483,48 +483,89 @@ class MonitorService : Service(), PebbleTransport.Listener {
         }
     }
 
-    private suspend fun serverHeartbeatLoop() {
-        var failures = 0
-        while (true) {
-            var delayMs = 300_000L
-            if (server.configured) {
-                val bm = getSystemService(BatteryManager::class.java)
-                val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                val age = if (lastWatchDataT == 0L) null
-                          else ((System.currentTimeMillis() - lastWatchDataT) / 1000).toInt()
-                val ack = server.heartbeat(pct, watchBattery, age,
-                                           lowBatteryWarning = pct in 1..15)
-                CmLog.d(TAG, "server heartbeat ok=${ack != null} phoneBatt=$pct " +
-                    "watchAge=$age degraded=${ack?.degraded}")
-                if (ack != null) {
-                    failures = 0
-                    if (!serverReachable) {
-                        serverReachable = true
-                        CmLog.i(TAG, "server reachable again")
-                        updateNotification()
-                    }
-                    onDegradedState(ack.degraded)
-                    if (ack.command == "latency_drill") runLatencyDrill()
-                } else {
-                    // One miss is usually a transient (cell handover, Doze
-                    // exit, DNS blip): retry in a minute BEFORE declaring
-                    // the server down — a single InterruptedIOException
-                    // must not contradict a perfectly reachable server in
-                    // the notification for the next five minutes.
-                    failures++
-                    delayMs = 60_000L
-                    soak.inc(SoakStats.SERVER_FAILS)
-                    CmLog.w(TAG, "server heartbeat failed x$failures " +
-                        "(${server.lastResult})")
-                    if (failures >= 2 && serverReachable) {
-                        serverReachable = false
-                        notifyFault("Server unreachable — phone-direct " +
-                            "escalation active.")
-                        updateNotification()
-                    }
-                }
+    // ---- server heartbeat (AlarmManager-driven) ----
+    //
+    // Field finding 2026-08-29: a coroutine delay() loop is silently
+    // deferred by HyperOS Doze even in a foreground service with battery
+    // optimization off — heartbeats arrived minutes late all day and one
+    // 25-minute gap fired the server's phone_silent advisory. Exact
+    // alarms (setExactAndAllowWhileIdle) are the one mechanism Android
+    // commits to firing on time in Doze; each tick holds a short
+    // wakelock so the network send completes before the device sleeps.
+
+    private var hbFailures = 0
+
+    private fun heartbeatTickIntent(): PendingIntent =
+        PendingIntent.getForegroundService(this, 1,
+            Intent(this, MonitorService::class.java)
+                .setAction(ACTION_HEARTBEAT_TICK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+    private fun scheduleHeartbeat(delayMs: Long) {
+        val am = getSystemService(android.app.AlarmManager::class.java)
+        val at = System.currentTimeMillis() + delayMs
+        try {
+            if (Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()) {
+                am.setExactAndAllowWhileIdle(
+                    android.app.AlarmManager.RTC_WAKEUP, at, heartbeatTickIntent())
+            } else {
+                am.setAndAllowWhileIdle(
+                    android.app.AlarmManager.RTC_WAKEUP, at, heartbeatTickIntent())
+                CmLog.w(TAG, "exact alarms NOT permitted — heartbeat timing " +
+                    "is Doze-inexact (Settings > Apps > Special app access)")
             }
-            delay(delayMs)
+        } catch (e: Exception) {
+            CmLog.e(TAG, "failed to schedule heartbeat alarm", e)
+        }
+    }
+
+    private fun onHeartbeatTick() {
+        val wl = getSystemService(android.os.PowerManager::class.java)
+            .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "cryomonitor:hb")
+        runCatching { wl.acquire(45_000) }
+        scope.launch {
+            try {
+                doServerHeartbeat()
+            } finally {
+                scheduleHeartbeat(if (hbFailures > 0) 60_000L else HEARTBEAT_INTERVAL_MS)
+                runCatching { if (wl.isHeld) wl.release() }
+            }
+        }
+    }
+
+    private suspend fun doServerHeartbeat() {
+        if (!server.configured) return
+        val bm = getSystemService(BatteryManager::class.java)
+        val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val age = if (lastWatchDataT == 0L) null
+                  else ((System.currentTimeMillis() - lastWatchDataT) / 1000).toInt()
+        val ack = server.heartbeat(pct, watchBattery, age,
+                                   lowBatteryWarning = pct in 1..15)
+        CmLog.d(TAG, "server heartbeat ok=${ack != null} phoneBatt=$pct " +
+            "watchAge=$age degraded=${ack?.degraded}")
+        if (ack != null) {
+            hbFailures = 0
+            if (!serverReachable) {
+                serverReachable = true
+                CmLog.i(TAG, "server reachable again")
+                updateNotification()
+            }
+            onDegradedState(ack.degraded)
+            if (ack.command == "latency_drill") runLatencyDrill()
+        } else {
+            // One miss is usually a transient (cell handover, Doze exit,
+            // DNS blip): retry in a minute BEFORE declaring the server
+            // down.
+            hbFailures++
+            soak.inc(SoakStats.SERVER_FAILS)
+            CmLog.w(TAG, "server heartbeat failed x$hbFailures " +
+                "(${server.lastResult})")
+            if (hbFailures >= 2 && serverReachable) {
+                serverReachable = false
+                notifyFault("Server unreachable — phone-direct " +
+                    "escalation active.")
+                updateNotification()
+            }
         }
     }
 
@@ -541,6 +582,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 CmLog.i(TAG, "fire-drill TEST alarm requested")
                 scope.launch { escalate("test", isTest = true) }
             }
+            ACTION_HEARTBEAT_TICK -> onHeartbeatTick()
             ACTION_HEARTBEAT_NOW -> scope.launch {
                 val bm = getSystemService(BatteryManager::class.java)
                 val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
@@ -750,6 +792,10 @@ class MonitorService : Service(), PebbleTransport.Listener {
 
     override fun onDestroy() {
         stopSiren()
+        runCatching {
+            getSystemService(android.app.AlarmManager::class.java)
+                .cancel(heartbeatTickIntent())
+        }
         runCatching { unregisterReceiver(dataLogReceiver) }
         watchLink.stop()
         scope.cancel()
@@ -772,6 +818,8 @@ class MonitorService : Service(), PebbleTransport.Listener {
         const val ACTION_SET_DEBUG = "org.cryomonitor.SET_DEBUG"
         const val ACTION_SET_QMETRIC = "org.cryomonitor.SET_QMETRIC"
         const val ACTION_HEARTBEAT_NOW = "org.cryomonitor.HEARTBEAT_NOW"
+        const val ACTION_HEARTBEAT_TICK = "org.cryomonitor.HEARTBEAT_TICK"
+        private const val HEARTBEAT_INTERVAL_MS = 300_000L
         const val ACTION_LATENCY_DRILL = "org.cryomonitor.LATENCY_DRILL"
         const val ACTION_WORKER_HEARTBEAT = "org.cryomonitor.WORKER_HEARTBEAT"
         const val ACTION_HR_LAB = "org.cryomonitor.HR_LAB"

@@ -13,6 +13,12 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Doze-proof heartbeat: coroutine timers are deferred by HyperOS
+         even in a foreground service (field 2026-08-29). USE_EXACT_ALARM
+         auto-grants (sideload; alarm is life-safety-critical),
+         SCHEDULE_EXACT_ALARM is the user-grantable fallback. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Fallback escalation + gateway role: sideload flavor only.

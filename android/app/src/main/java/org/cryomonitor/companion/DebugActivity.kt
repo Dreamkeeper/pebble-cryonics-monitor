@@ -78,6 +78,7 @@ class DebugActivity : AppCompatActivity() {
     private lateinit var shareBtn: Button
     private lateinit var s5Line: TextView
     private lateinit var s6Line: TextView
+    private lateinit var dozeLine: TextView
 
     // ---- soak & recovery (spec: companion-resilience) ----
     private lateinit var soak: SoakStats
@@ -140,6 +141,23 @@ class DebugActivity : AppCompatActivity() {
             text = "View logs"
             setOnClickListener {
                 startActivity(Intent(this@DebugActivity, LogActivity::class.java))
+            }
+        })
+        dozeLine = TextView(this).apply { caption() }
+        col.addView(dozeLine)
+        col.addView(Button(this).apply {
+            text = "Request battery-optimization exemption"
+            setOnClickListener {
+                @Suppress("BatteryLife")
+                runCatching {
+                    startActivity(Intent(
+                        android.provider.Settings
+                            .ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:$packageName")))
+                }.onFailure {
+                    Toast.makeText(this@DebugActivity,
+                        "Open Settings > Battery manually.", Toast.LENGTH_LONG).show()
+                }
             }
         })
         @Suppress("UseSwitchCompatOrMaterialCode")
@@ -704,6 +722,19 @@ class DebugActivity : AppCompatActivity() {
     // ---- passive cards ----
 
     private fun refreshPassiveCards() {
+        // Doze posture: both must be green or heartbeats stall (2026-08-29:
+        // all-day late-flapping + one phone_silent advisory from deferral).
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        val am = getSystemService(android.app.AlarmManager::class.java)
+        val exempt = pm.isIgnoringBatteryOptimizations(packageName)
+        val exact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()
+        dozeLine.text =
+            (if (exempt) "Battery optimization: EXEMPT ✓"
+             else "Battery optimization: NOT EXEMPT — heartbeats will " +
+                 "stall in Doze (use the button below)") + "\n" +
+            (if (exact) "Exact alarms: allowed ✓"
+             else "Exact alarms: BLOCKED — Settings > Apps > Special " +
+                 "app access > Alarms & reminders")
         soakCard.text = renderSoak().lines()
             .filter { it.isNotBlank() && !it.startsWith("#") }
             .joinToString("\n")

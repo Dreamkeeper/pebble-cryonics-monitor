@@ -140,7 +140,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                         (if (settings.debugLogging) 1 else 0)))
                 if (labActive) watchLink.send(mapOf(
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_HR_LAB,
-                    PebbleTransport.KEY_SECONDS to 1))
+                    PebbleTransport.KEY_SECONDS to labModeValue()))
                 CmLog.d(TAG, "watch heartbeat seq=${data[PebbleTransport.KEY_HEARTBEAT_SEQ]} " +
                     "batt=$watchBattery")
                 updateNotification()
@@ -198,11 +198,16 @@ class MonitorService : Service(), PebbleTransport.Listener {
             }
             Protocol.PMSG_HR_SAMPLE -> {
                 // S4 sensor lab sample: relay to the DebugActivity.
+                // SECONDS = raw bpm | quality_enc<<8 (0=OffWrist..5=Excellent,
+                // 255=n/a); HEARTBEAT_SEQ = event age | filtered bpm<<8.
+                val packed = (data[PebbleTransport.KEY_SECONDS] as? Int) ?: 0
+                val packed2 = (data[PebbleTransport.KEY_HEARTBEAT_SEQ] as? Int) ?: 0
                 sendBroadcast(Intent(ACTION_HR_SAMPLE)
                     .setPackage(packageName)
-                    .putExtra("bpm", (data[PebbleTransport.KEY_SECONDS] as? Int) ?: 0)
-                    .putExtra("event_age_s",
-                        (data[PebbleTransport.KEY_HEARTBEAT_SEQ] as? Int) ?: -1)
+                    .putExtra("bpm", packed and 0xFF)
+                    .putExtra("quality", (packed shr 8) and 0xFF)
+                    .putExtra("filtered", (packed2 shr 8) and 0xFF)
+                    .putExtra("event_age_s", packed2 and 0xFF)
                     .putExtra("heap",
                         ((data[PebbleTransport.KEY_DETECTOR] as? Int) ?: 0) * 64))
             }
@@ -239,7 +244,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
                 CmLog.i(TAG, "watchapp opened during lab — re-arming lab mode")
                 watchLink.send(mapOf(
                     PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_HR_LAB,
-                    PebbleTransport.KEY_SECONDS to 1))
+                    PebbleTransport.KEY_SECONDS to labModeValue()))
             }
         }
     }
@@ -296,6 +301,10 @@ class MonitorService : Service(), PebbleTransport.Listener {
             watchLink.startWatchapp()
         }
     }
+
+    /** PMSG_HR_LAB SECONDS: 2 = lab + raw-quality peeks (diag firmware
+     *  only — stock asserts on the unknown metric), 1 = plain lab. */
+    private fun labModeValue(): Int = if (settings.labQualityMetric) 2 else 1
 
     private fun detectorName(data: Map<Int, Any>): String {
         val idx = data[PebbleTransport.KEY_DETECTOR] as? Int ?: return "unknown"
@@ -544,12 +553,13 @@ class MonitorService : Service(), PebbleTransport.Listener {
             ACTION_HR_LAB -> {
                 val on = intent.getBooleanExtra("on", false)
                 labActive = on
-                CmLog.i(TAG, "S4 sensor lab ${if (on) "START" else "STOP"}")
+                CmLog.i(TAG, "S4 sensor lab ${if (on) "START" else "STOP"} " +
+                    "(quality=${settings.labQualityMetric})")
                 scope.launch {
                     if (on) { watchLink.startWatchapp(); delay(3_000) }
                     watchLink.send(mapOf(
                         PebbleTransport.KEY_MSG_TYPE to Protocol.PMSG_HR_LAB,
-                        PebbleTransport.KEY_SECONDS to (if (on) 1 else 0)))
+                        PebbleTransport.KEY_SECONDS to (if (on) labModeValue() else 0)))
                 }
             }
             ACTION_WORKER_HEARTBEAT -> {

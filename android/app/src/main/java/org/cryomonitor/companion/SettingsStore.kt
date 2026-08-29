@@ -45,6 +45,16 @@ class SettingsStore(context: Context) {
         set(v) = p.edit().putBoolean("debug_logging", v).apply()
 
     /**
+     * Sensor lab reads the raw HR quality metric — ONLY valid on the
+     * hr-quality-diag fork firmware (stock firmware asserts on the
+     * unknown metric and the watchapp would crash mid-lab). Off by
+     * default; the owner's Time 2 runs the diag build.
+     */
+    var labQualityMetric: Boolean
+        get() = p.getBoolean("lab_quality_metric", false)
+        set(v) = p.edit().putBoolean("lab_quality_metric", v).apply()
+
+    /**
      * S5 fallback (owner decision 2026-08-27): the worker cannot reach the
      * phone while the watchapp is closed (no AppMessage; DataLogging dead
      * in the current phone stack), so the companion may periodically

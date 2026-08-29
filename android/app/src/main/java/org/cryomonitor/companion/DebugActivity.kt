@@ -43,7 +43,8 @@ class DebugActivity : AppCompatActivity() {
         Stage("strap_loose", "Loosen the strap by two holes.\nRest your arm again.", 120),
         Stage("table_flat", "Take the watch OFF.\nLay it screen-UP on the table.", 180),
         Stage("table_facedown", "Flip the watch screen-DOWN\n(sensor facing up).", 120),
-        Stage("fabric", "Press the sensor side\nagainst clothing or fabric.", 120))
+        Stage("fabric", "Press the sensor side\nagainst clothing or fabric.", 120),
+        Stage("air_dangle", "Hold the watch by the strap\nENDS, sensor toward a lit\nwall ~1 m away, arm raised.", 120))
 
     /**
      * Lab flow (owner feedback, round 7): instruct FIRST, measure only
@@ -66,6 +67,8 @@ class DebugActivity : AppCompatActivity() {
     private val stageAges = HashMap<String, MutableList<Int>>()
     private var minHeap = Int.MAX_VALUE
     private var lastResultFile: File? = null
+    private val stageQuality = HashMap<String, MutableList<Int>>()
+    private val stageFiltered = HashMap<String, MutableList<Int>>()
 
     private lateinit var labInstruction: TextView
     private lateinit var labLive: TextView
@@ -92,12 +95,19 @@ class DebugActivity : AppCompatActivity() {
     private val sampleReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
             intent ?: return
-            val bpm = intent.getIntExtra("bpm", 0)
-            val age = intent.getIntExtra("event_age_s", -1)
-            val heap = intent.getIntExtra("heap", 0)
-            onLabSample(bpm, age, heap)
+            onLabSample(
+                intent.getIntExtra("bpm", 0),
+                intent.getIntExtra("quality", 255),
+                intent.getIntExtra("filtered", 0),
+                intent.getIntExtra("event_age_s", -1),
+                intent.getIntExtra("heap", 0))
         }
     }
+
+    /** quality_enc: 0=OffWrist 1=Worst 2=Poor 3=Acceptable 4=Good
+     *  5=Excellent 255=n/a (plain lab / stock firmware). */
+    private fun qualityLabel(q: Int): String =
+        arrayOf("OW", "W", "P", "A", "G", "E").getOrNull(q) ?: "-"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -132,6 +142,13 @@ class DebugActivity : AppCompatActivity() {
                 startActivity(Intent(this@DebugActivity, LogActivity::class.java))
             }
         })
+        @Suppress("UseSwitchCompatOrMaterialCode")
+        col.addView(Switch(this).apply {
+            text = "Lab reads raw HR quality (hr-quality-diag firmware " +
+                "ONLY — the watchapp crashes mid-lab on stock firmware)"
+            isChecked = settings.labQualityMetric
+            setOnCheckedChangeListener { _, on -> settings.labQualityMetric = on }
+        })
 
         header("S1 — alarm-path latency drill")
         col.addView(TextView(this).apply {
@@ -150,12 +167,13 @@ class DebugActivity : AppCompatActivity() {
             }
         })
 
-        header("S4 — guided HR sensor lab (~13 min)")
+        header("S4 — guided HR sensor lab (~15 min)")
         col.addView(TextView(this).apply {
             caption()
             text = "Answers: what does the raw HR sensor report when worn, " +
-                "still, loose, and off-wrist? The watch runs burst sampling " +
-                "and detectors are held — no alarms during the test."
+                "still, loose, off-wrist, and dangling in air? Records raw " +
+                "bpm, per-sample quality (diag firmware), and the filtered " +
+                "bpm. Burst sampling; detectors held — no alarms."
         })
         labInstruction = TextView(this).apply {
             title()
@@ -491,8 +509,9 @@ class DebugActivity : AppCompatActivity() {
         labState = LabState.PREPARING
         stageIdx = -1
         csv.clear()
-        csv.append("t_rel_s,stage,bpm,event_age_s,heap_bytes\n")
+        csv.append("t_rel_s,stage,bpm,quality,filtered_bpm,event_age_s,heap_bytes\n")
         stageSamples.clear(); stageAges.clear()
+        stageQuality.clear(); stageFiltered.clear()
         minHeap = Int.MAX_VALUE
         prepareRetries = 0
         labStartedAt = System.currentTimeMillis()
@@ -557,12 +576,13 @@ class DebugActivity : AppCompatActivity() {
             "(hold this condition until the buzz)"
     }
 
-    private fun onLabSample(bpm: Int, age: Int, heap: Int) {
+    private fun onLabSample(bpm: Int, quality: Int, filtered: Int, age: Int, heap: Int) {
         if (labState == LabState.IDLE || labState == LabState.DONE) return
         if (heap in 1 until minHeap) minHeap = heap
         labLive.visibility = android.view.View.VISIBLE
         labLive.text = String.format(Locale.US,
-            "bpm %3d   event age %2d s   heap %4d B", bpm, age, heap)
+            "raw %3d q:%-2s filt %3d\nage %3d s   heap %4d B",
+            bpm, qualityLabel(quality), filtered, age, heap)
         if (labState == LabState.PREPARING) {
             // First sample = the watch is in lab mode: brief stage 1.
             stageIdx = 0
@@ -572,9 +592,11 @@ class DebugActivity : AppCompatActivity() {
         if (labState != LabState.MEASURING) return  /* setup time: not recorded */
         val st = stages.getOrNull(stageIdx) ?: return
         val tRel = (System.currentTimeMillis() - labStartedAt) / 1000
-        csv.append("$tRel,${st.key},$bpm,$age,$heap\n")
+        csv.append("$tRel,${st.key},$bpm,${qualityLabel(quality)},$filtered,$age,$heap\n")
         stageSamples.getOrPut(st.key) { mutableListOf() }.add(bpm)
         stageAges.getOrPut(st.key) { mutableListOf() }.add(age)
+        stageQuality.getOrPut(st.key) { mutableListOf() }.add(quality)
+        stageFiltered.getOrPut(st.key) { mutableListOf() }.add(filtered)
     }
 
     private fun finishLab() {
@@ -625,13 +647,23 @@ class DebugActivity : AppCompatActivity() {
             val s = stageSamples[st.key] ?: emptyList()
             val nz = s.filter { it > 0 }
             val ages = stageAges[st.key] ?: emptyList()
+            val qs = (stageQuality[st.key] ?: emptyList()).filter { it != 255 }
+            val qDist = if (qs.isEmpty()) "" else " q[" +
+                (0..5).mapNotNull { q ->
+                    val n = qs.count { it == q }
+                    if (n > 0) "${qualityLabel(q)}×$n" else null
+                }.joinToString(" ") + "]"
+            val filt = stageFiltered[st.key] ?: emptyList()
+            val fNz = filt.count { it > 0 }
+            val fInfo = if (filt.isEmpty()) ""
+                else " filtNonzero=${fNz * 100 / filt.size}%"
             sb.append("# ${st.key}: n=${s.size} " +
                 "nonzero=${nz.size} (${if (s.isEmpty()) 0
                     else nz.size * 100 / s.size}%) " +
                 (if (nz.isEmpty()) "bpm=-" else
                     "bpm=${nz.min()}..${nz.sorted()[nz.size / 2]}..${nz.max()}") +
                 " medianEventAge=${if (ages.isEmpty()) "-" else
-                    "${ages.sorted()[ages.size / 2]}s"}\n")
+                    "${ages.sorted()[ages.size / 2]}s"}$qDist$fInfo\n")
         }
         return sb.toString()
     }

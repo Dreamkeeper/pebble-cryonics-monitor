@@ -21,3 +21,13 @@
 - [x] 8. Carry mode (owner follow-up 2026-08-29): long-press UP =
        timer-only 120 min suspension — hand-carry puts real skin on
        the sensor, indistinguishable from wear; watchapp 0.4.9.
+- [x] 9. Quality instrumentation (owner "go" 2026-08-29): free-air
+       dangle produces CHANGING bpm (Goodix wear detection defeated by
+       ambient light) — lab now records per-sample raw quality via
+       fork-diag firmware metric (HealthMetric 9, hr-quality-diag
+       branch) + filtered bpm; new air_dangle stage; phone gates the
+       quality peek (stock firmware would assert). Watch 0.4.10,
+       companion 0.5.3, firmware pebbleos-obelix-pvt-hr-quality-diag.
+- [ ] 10. Owner: flip "Lab reads raw HR quality" on, sideload the diag
+       .pbz + 0.4.10 + 0.5.3, run the 7-stage lab. Data decides the
+       liveness quality gate and feeds the upstream Goodix issue.

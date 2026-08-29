@@ -122,9 +122,12 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
     }
     case PMSG_HR_LAB: {
       Tuple *v = dict_find(iter, MESSAGE_KEY_SECONDS);
-      bool on = v && v->value->uint16;
+      /* 0 = off, 1 = lab on, 2 = lab on + raw-quality peeks (only valid
+       * on the hr-quality-diag firmware; the phone gates this). */
+      uint16_t mode = v ? v->value->uint16 : 0;
+      bool on = mode != 0;
       s_lab_hold = on;
-      AppWorkerMessage m = {.data0 = on ? 1 : 0};
+      AppWorkerMessage m = {.data0 = mode};
       app_worker_send_message(WMSG_HR_LAB, &m);
       if (on) {
         text_layer_set_text(s_status_layer, "Sensor lab");
@@ -413,9 +416,14 @@ static void worker_message_handler(uint16_t type, AppWorkerMessage *m) {
       app_message_outbox_send();
     }
     if (s_lab_hold) {
+      /* data0 = bpm | quality_enc<<8; data2 = age | filtered<<8 */
+      static const char *q_names[] = {"OW", "W", "P", "A", "G", "E"};
+      unsigned q = (unsigned)(m->data0 >> 8);
       snprintf(s_detail_buf, sizeof(s_detail_buf),
-               "bpm %u · age %us\nheap %uB", (unsigned)m->data0,
-               (unsigned)m->data2, (unsigned)(m->data1 * 64u));
+               "bpm %u q:%s filt %u\nage %us · heap %uB",
+               (unsigned)(m->data0 & 0xFF), q <= 5 ? q_names[q] : "-",
+               (unsigned)(m->data2 >> 8), (unsigned)(m->data2 & 0xFF),
+               (unsigned)(m->data1 * 64u));
       text_layer_set_text(s_detail_layer, s_detail_buf);
     }
   } else if (type == WMSG_DIAG) {

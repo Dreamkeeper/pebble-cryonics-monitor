@@ -308,18 +308,31 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
 
   if (s_hr_lab && (++s_lab_tick & 1)) {
     HealthValue v = 0;
+    HealthValue filt = 0;
+    uint16_t q_enc = 255; /* n/a: quality metric not requested */
 #if defined(PBL_HEALTH)
     v = health_service_peek_current_value(HealthMetricHeartRateRawBPM);
+    filt = health_service_peek_current_value(HealthMetricHeartRateBPM);
+    if (s_hr_lab == 2) {
+      /* Fork-firmware diagnostic (hr-quality-diag): HealthMetric 9 =
+       * raw HRMQuality of the newest sample. Guarded by lab mode 2 —
+       * stock firmware asserts on unknown metrics, so the phone only
+       * requests this when the wearer confirms the diag firmware. */
+      HealthValue q = health_service_peek_current_value((HealthMetric)9);
+      q_enc = (uint16_t)(q + 1); /* OffWrist(-1)->0 .. Excellent(4)->5 */
+      if (q_enc > 5) q_enc = 255;
+    }
 #endif
     uint32_t heap = heap_bytes_free();
     if (heap > 255u * 64u) heap = 255u * 64u;
     uint32_t age_s = s_last_hr_event_ms
-        ? (now_ms() - s_last_hr_event_ms) / 1000u : 9999u;
-    if (age_s > 9999u) age_s = 9999u;
+        ? (now_ms() - s_last_hr_event_ms) / 1000u : 255u;
+    if (age_s > 255u) age_s = 255u;
+    uint32_t filt_c = filt > 0 ? (filt > 255 ? 255u : (uint32_t)filt) : 0u;
     AppWorkerMessage lab = {
-      .data0 = (uint16_t)(v > 0 ? (v > 255 ? 255 : v) : 0),
+      .data0 = (uint16_t)((v > 0 ? (v > 255 ? 255 : v) : 0) | (q_enc << 8)),
       .data1 = (uint16_t)(heap / 64u),
-      .data2 = (uint16_t)age_s,
+      .data2 = (uint16_t)(age_s | (filt_c << 8)),
     };
     app_worker_send_message(WMSG_HR_SAMPLE, &lab);
   }

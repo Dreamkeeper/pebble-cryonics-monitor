@@ -113,6 +113,11 @@ enum {
 
 /* Normal vs burst HR sampling period (seconds). */
 #define CM_HR_PERIOD_NORMAL_S 60
+/* While suspended or on the charger the sensor only feeds auto-resume /
+ * expiry re-arm, so one sample per 5 min is enough (owner power request
+ * 2026-09-07). Auto-resume may lag by up to one period; SELECT resumes
+ * instantly. Restored to NORMAL on resume/expiry/unplug. */
+#define CM_HR_PERIOD_HOLD_S 300
 #define CM_HR_PERIOD_BURST_S 1
 
 #endif /* CM_PROTOCOL_H */

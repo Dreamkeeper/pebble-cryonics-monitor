@@ -177,8 +177,12 @@ static void notify_app(const cm_action *a, bool launch) {
 
 static void set_hr_burst(bool on) {
 #if defined(PBL_HEALTH)
+  /* Idle cadence: 60 s while monitoring, 300 s while suspended or on
+   * the charger — the sensor only serves auto-resume / re-arm then. */
   health_service_set_heart_rate_sample_period(
-      on ? CM_HR_PERIOD_BURST_S : CM_HR_PERIOD_NORMAL_S);
+      on ? CM_HR_PERIOD_BURST_S
+         : (s_core.suspended || s_core.charging) ? CM_HR_PERIOD_HOLD_S
+                                                  : CM_HR_PERIOD_NORMAL_S);
 #endif
   s_hr_burst_active = on ? 1 : 0;
 }
@@ -230,6 +234,7 @@ static void drain_actions(void) {
         notify_app(&a, false);
         break;
       case CM_ACT_SUSPEND_STARTED:
+        set_hr_burst(false); /* -> 5-min sample cadence for the hold */
         notify_app(&a, false);
         break;
       /* Resume clears the persisted suspension — without this a worker
@@ -243,6 +248,7 @@ static void drain_actions(void) {
       case CM_ACT_AUTO_RESUMED:
         persist_delete(PK_SUSPEND_UNTIL);
         persist_delete(PK_SUSPEND_AUTORESUME);
+        set_hr_burst(false); /* back to the 60 s monitoring cadence */
         notify_app(&a, true);
         break;
       /* Dock/undock are deliberate wearer acts: launch the app briefly so
@@ -252,6 +258,7 @@ static void drain_actions(void) {
        * auto-launch guard returns the watchface within seconds. */
       case CM_ACT_CHARGING_STARTED:
       case CM_ACT_CHARGING_ENDED:
+        set_hr_burst(false); /* hold cadence on dock, normal on undock */
         notify_app(&a, true);
         break;
       default: break;

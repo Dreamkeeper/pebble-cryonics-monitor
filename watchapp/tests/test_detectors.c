@@ -929,6 +929,55 @@ static void test_hr_unavailable_hardware(void) {
   CHECK(count_type(CM_ACT_CHECKIN_START) == 1);
 }
 
+
+/* SELECT while suspended = explicit check-in: ends the suspension in any
+ * mode (auto-resume or timer-only carry) immediately; a latched ALARM
+ * takes precedence so the first press cancels it and the suspension
+ * continues (owner request 2026-09-07, with the 5-min sensor cadence). */
+static void test_manual_resume_by_select(void) {
+  g_test = "manual_resume_by_select";
+  cm_config cfg = test_cfg();
+  setup(&cfg);
+  warmup();
+
+  /* auto-resume suspension: SELECT ends it at once, no instant triggers */
+  cm_suspend(&core, 1800, 1, now_ms);
+  drain(); log_reset();
+  mins_still(5);
+  cm_user_ok(&core, now_ms); drain();
+  CHECK(count_type(CM_ACT_AUTO_RESUMED) == 1);
+  CHECK(cm_suspend_remaining_s(&core, now_ms) == 0);
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 0);
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  secs_still(30);
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 0); /* baselines were reset */
+
+  /* timer-only carry mode: SELECT still resumes (explicit, not heuristic) */
+  cm_suspend(&core, 7200, 0, now_ms);
+  drain(); log_reset();
+  for (int i = 0; i < 120; i++) sec_moving_hr((uint16_t)(70 + (i & 1)));
+  CHECK(count_type(CM_ACT_AUTO_RESUMED) == 0); /* carry: wear signals ignored */
+  cm_user_ok(&core, now_ms); drain();
+  CHECK(count_type(CM_ACT_AUTO_RESUMED) == 1);
+  CHECK(cm_suspend_remaining_s(&core, now_ms) == 0);
+
+  /* latched alarm survives docking/suspension: first press cancels the
+   * alarm and keeps the suspension, second press resumes */
+  cm_manual_sos(&core, now_ms); drain();
+  secs_still(40);
+  CHECK(cm_current_stage(&core) == CM_STAGE_ALARM);
+  cm_suspend(&core, 1800, 1, now_ms); drain();
+  CHECK(cm_current_stage(&core) == CM_STAGE_ALARM);
+  log_reset();
+  cm_user_ok(&core, now_ms); drain();
+  CHECK(count_type(CM_ACT_ALERT_CANCELLED) == 1);
+  CHECK(count_type(CM_ACT_AUTO_RESUMED) == 0);
+  CHECK(cm_suspend_remaining_s(&core, now_ms) > 0);
+  cm_user_ok(&core, now_ms); drain();
+  CHECK(count_type(CM_ACT_AUTO_RESUMED) == 1);
+  CHECK(cm_suspend_remaining_s(&core, now_ms) == 0);
+}
+
 int main(void) {
   test_defaults();
   test_impact_full_ladder();
@@ -963,6 +1012,7 @@ int main(void) {
   test_lab_hold_is_silent();
   test_manual_sos();
   test_hr_unavailable_hardware();
+  test_manual_resume_by_select();
 
   printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;

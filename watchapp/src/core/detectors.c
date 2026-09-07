@@ -561,6 +561,16 @@ void cm_user_ok(cm_core *c, uint32_t now_ms) {
     cancel_alert(c, CM_CANCEL_USER);
     return;
   }
+  /* Suspended (any mode, incl. timer-only carry): the press is an
+   * explicit check-in — end the suspension now rather than waiting for
+   * the timer or the (slow, 5-min-cadence) auto-resume. A latched ALARM
+   * took precedence above: the first press cancels it, the suspension
+   * continues, the next press resumes (owner request 2026-09-07). */
+  if (c->suspended) {
+    cm_resume(c, now_ms);
+    if (c->cfg.enabled[CM_DET_CHECKIN]) schedule_next_checkin(c);
+    return;
+  }
   /* No alert active: treat as an early scheduled check-in. */
   if (c->cfg.enabled[CM_DET_CHECKIN]) {
     schedule_next_checkin(c);

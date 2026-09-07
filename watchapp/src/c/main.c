@@ -36,7 +36,7 @@ static char s_detail_buf[64];
 static bool s_nag_hold;
 
 static const char *HINTS_TEXT =
-    "SELECT check-in\nUP suspend (hold: carry)\nDOWN hold SOS";
+    "SELECT check-in/resume\nUP suspend (hold: carry)\nDOWN hold SOS";
 
 static Window *s_alert_window;
 static TextLayer *s_alert_title;

@@ -26,16 +26,25 @@ class LogActivity : AppCompatActivity() {
         row.addView(Button(this).apply {
             text = "Share"
             setOnClickListener {
-                startActivity(Intent.createChooser(
-                    Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_SUBJECT, "Cryonics Monitor logs")
-                        putExtra(Intent.EXTRA_TEXT, CmLog.dump())
-                    }, "Share logs"))
+                val f = CmLog.exportForShare(this@LogActivity)
+                if (f == null) {
+                    android.widget.Toast.makeText(this@LogActivity,
+                        "Could not write log file", android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    Ui.shareFile(this@LogActivity, f, "Cryonics Monitor logs", "Share logs")
+                }
             }
         })
         row.addView(Button(this).apply {
-            text = "Clear"; setOnClickListener { CmLog.clear(); refresh() }
+            text = "Clear"
+            setOnClickListener {
+                androidx.appcompat.app.AlertDialog.Builder(this@LogActivity)
+                    .setTitle("Clear all logs?")
+                    .setMessage("Deletes the in-app log and the on-disk daily files. This cannot be undone.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Clear") { _, _ -> CmLog.clear(); refresh() }
+                    .show()
+            }
         })
         col.addView(row)
 

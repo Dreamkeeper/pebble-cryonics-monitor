@@ -724,12 +724,7 @@ class DebugActivity : AppCompatActivity() {
 
     private fun shareResults() {
         val f = lastResultFile ?: return
-        val text = runCatching { f.readText() }.getOrElse { "no data" }
-        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, f.name)
-            putExtra(Intent.EXTRA_TEXT, text)
-        }, "Share S4 lab results"))
+        Ui.shareFile(this, f, f.name, "Share S4 lab results")
     }
 
     private companion object { const val PREFLIGHT_MS = 30_000L }

@@ -43,7 +43,7 @@ never auto-dials them.
 
 **Field-testing (soak) phase** — the full chain (watch → phone → server →
 Telegram/ntfy) runs 24/7 on real hardware: Pebble Time 2, Android 16 phone,
-self-hosted server. Current builds: watchapp **0.5.4**, companion **0.6.2**,
+self-hosted server. Current builds: watchapp **0.5.5**, companion **0.6.2**,
 all in [`dist/`](dist/).
 
 Done since the pre-alpha milestone:
@@ -102,7 +102,7 @@ cd server && cp .env.example .env   # set CM_API_TOKEN etc.
 docker compose up -d --build        # API on :8080, ntfy on :8090
 ```
 
-Tests: `watchapp/tests` (host C, gcc/MSVC — 192 checks), `server/tests`
+Tests: `watchapp/tests` (host C, gcc/MSVC — 208 checks), `server/tests`
 (pytest — 73 checks), and `android` JVM unit tests (`gradle test`).
 
 ## License

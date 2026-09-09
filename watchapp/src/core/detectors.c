@@ -95,11 +95,21 @@ void cm_init(cm_core *c, const cm_config *cfg, uint32_t now_ms) {
   c->cfg = *cfg;
   c->now_ms = now_ms;
   c->last_motion_ms = now_ms;
+  c->last_sustained_ms = now_ms;
   c->last_pulse_ms = now_ms;
   c->last_bpm_change_ms = now_ms;
   c->checkin_due_ms = now_ms + (uint32_t)cfg->checkin_interval_min * 60000u;
   c->nonmotion_armed = 1;
 }
+
+/* Sustained motion = jerk in CM_SUSTAIN_SECS distinct seconds within a
+ * CM_SUSTAIN_WINDOW_MS window. A single jerk is a bump — a desk being
+ * used, a bed partner turning, a vehicle — and must neither dismiss a
+ * check-in nor stand a pulse hunt down (field 2026-09-09: a desk bump
+ * cancelled a pulse-loss CHECKIN within a second). Compile-time for the
+ * same reason as the cooldown below. */
+#define CM_SUSTAIN_SECS 3
+#define CM_SUSTAIN_WINDOW_MS 10000u
 
 /* Quiet time after a not-worn hunt confirmed a live wrist (see
  * tick_notworn). Compile-time on purpose: cm_config is persisted and
@@ -197,17 +207,27 @@ static void start_countdown_stage(cm_core *c, uint8_t det) {
 /* ---- motion ---- */
 static void note_motion(cm_core *c) {
   c->last_motion_ms = c->now_ms;
-  c->motion_this_second = 1;
   c->nonmotion_armed = 1;
   c->notworn_nagged = 0;
+  if (c->motion_this_second) return; /* one motion-second per second */
+  c->motion_this_second = 1;
 
-  /* Motion auto-dismisses the CHECKIN stage — except scheduled check-ins,
-   * which require a deliberate button press, and except SOS. */
+  /* Sustained motion only: a single jerk is a bump, not a wearer. */
+  if (elapsed(c->now_ms, c->motion_win_start_ms) > CM_SUSTAIN_WINDOW_MS) {
+    c->motion_win_start_ms = c->now_ms;
+    c->motion_win_secs = 0;
+  }
+  if (c->motion_win_secs < 255) c->motion_win_secs++;
+  if (c->motion_win_secs < CM_SUSTAIN_SECS) return;
+  c->last_sustained_ms = c->now_ms;
+
+  /* Sustained motion auto-dismisses the CHECKIN stage — except scheduled
+   * check-ins, which require a deliberate button press, and except SOS. */
   if (c->stage == CM_STAGE_CHECKIN &&
       c->stage_det != CM_DET_CHECKIN && c->stage_det != CM_DET_SOS) {
     cancel_alert(c, CM_CANCEL_MOTION);
   }
-  /* Motion during a pulse hunt: not still any more — stand down silently. */
+  /* Sustained motion during a pulse hunt: not still — stand down silently. */
   if (c->pulse_phase == 1) end_pulse_machinery(c);
   /* Motion in the post-impact settle window is handled in cm_tick via
    * last_motion_ms; nothing to do here. */
@@ -217,6 +237,8 @@ static void note_motion(cm_core *c) {
  * four stores is smaller than repeating them at five call sites. */
 static CM_NOINLINE void reset_baselines(cm_core *c, uint32_t now_ms) {
   c->last_motion_ms = now_ms;
+  c->last_sustained_ms = now_ms;
+  c->motion_win_secs = 0;
   c->last_pulse_ms = now_ms;
   c->last_bpm_change_ms = now_ms;
   c->impact_phase = 0;
@@ -393,7 +415,9 @@ static void tick_ladder(cm_core *c) {
  * alarm ladder. Evaluated only at hunt-trigger time. */
 static int removal_suspected(const cm_core *c) {
   uint32_t w = (uint32_t)c->cfg.removal_window_s * 1000u;
-  int32_t d = (int32_t)(c->last_motion_ms - c->last_bpm_change_ms);
+  /* Handling a watch is sustained motion; a bump at the loss moment is
+   * not a removal signature (it used to route a collapse to the nag). */
+  int32_t d = (int32_t)(c->last_sustained_ms - c->last_bpm_change_ms);
   return d >= 0 ? (uint32_t)d <= w : (uint32_t)(-d) <= w;
 }
 
@@ -404,7 +428,8 @@ static void tick_pulse(cm_core *c) {
 
   uint32_t since_pulse = elapsed(c->now_ms, c->last_pulse_ms);
   uint32_t since_change = elapsed(c->now_ms, c->last_bpm_change_ms);
-  uint32_t since_motion = elapsed(c->now_ms, c->last_motion_ms);
+  /* Stillness for the ladder = no SUSTAINED motion (bumps do not count). */
+  uint32_t since_motion = elapsed(c->now_ms, c->last_sustained_ms);
 
   if (c->pulse_phase == 0) {
     /* Two loss signatures: readings STOP (lost), or readings continue

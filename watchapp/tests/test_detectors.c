@@ -242,7 +242,9 @@ static void test_impact_checkin_motion_dismiss(void) {
   CHECK(count_type(CM_ACT_CHECKIN_START) == 1);
   log_reset();
 
-  sec_moving(); /* motion during CHECKIN stage auto-dismisses */
+  sec_moving(); /* one bump: not a wearer */
+  CHECK(count_type(CM_ACT_ALERT_CANCELLED) == 0);
+  sec_moving(); sec_moving(); /* sustained motion dismisses */
   const cm_action *cc = find_type(CM_ACT_ALERT_CANCELLED);
   CHECK(cc != 0);
   CHECK(cc && cc->reason == CM_CANCEL_MOTION);
@@ -346,7 +348,9 @@ static void test_nonmotion_daytime(void) {
   CHECK(ci && ci->detector == CM_DET_NONMOTION);
   log_reset();
 
-  sec_moving(); /* motion dismisses */
+  sec_moving(); /* one bump does not dismiss */
+  CHECK(count_type(CM_ACT_ALERT_CANCELLED) == 0);
+  sec_moving(); sec_moving(); /* sustained motion dismisses */
   const cm_action *cc = find_type(CM_ACT_ALERT_CANCELLED);
   CHECK(cc != 0);
   CHECK(cc && cc->reason == CM_CANCEL_MOTION);
@@ -469,7 +473,7 @@ static void test_scheduled_checkin(void) {
   log_reset();
 
   /* motion must NOT dismiss a scheduled check-in — button only */
-  sec_moving();
+  sec_moving(); sec_moving(); sec_moving();
   CHECK(count_type(CM_ACT_ALERT_CANCELLED) == 0);
   cm_user_ok(&core, now_ms);
   drain();
@@ -1042,6 +1046,80 @@ static void test_sleeping_flat_bpm_hunts_before_nag(void) {
   CHECK(count_type(CM_ACT_NOTWORN_NAG) == 1);
 }
 
+
+/* Field 2026-09-09 11:46: a desk bump cancelled a pulse-loss CHECKIN one
+ * second after it started, and repeated bumps kept standing the hunt
+ * down. A single jerk is a bump — a desk, a bed partner turning, a
+ * vehicle — not a wearer. Only sustained motion (jerk in 3 distinct
+ * seconds within 10 s) dismisses a check-in or stands a hunt down. */
+static void test_bumps_do_not_dismiss_pulse_ladder(void) {
+  g_test = "bumps_do_not_dismiss_pulse_ladder";
+  cm_config cfg = test_cfg();
+  cfg.enabled[CM_DET_NONMOTION] = 0;
+  cfg.enabled[CM_DET_NOTWORN] = 0;
+  cfg.enabled[CM_DET_CHECKIN] = 0;
+  setup(&cfg);
+  warmup();
+  log_reset();
+
+  /* pulse stops; the surface is bumped every 15 s (bed partner) */
+  int secs = 0;
+  while (count_type(CM_ACT_CHECKIN_START) == 0 && secs < 400) {
+    if (secs % 15 == 7) sec_moving(); else sec_still();
+    secs++;
+  }
+  CHECK(count_type(CM_ACT_HR_BURST_ON) >= 1);        /* hunt ran despite bumps */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 1);      /* ... and concluded */
+  log_reset();
+
+  /* bumps during CHECKIN do not dismiss it: the ladder proceeds */
+  for (int i = 0; i < 40; i++) { if (i % 15 == 7) sec_moving(); else sec_still(); }
+  CHECK(count_type(CM_ACT_ALERT_CANCELLED) == 0);
+  CHECK(count_type(CM_ACT_COUNTDOWN_START) == 1);
+  for (int i = 0; i < 40; i++) { if (i % 15 == 7) sec_moving(); else sec_still(); }
+  CHECK(count_type(CM_ACT_ALARM) == 1);
+}
+
+static void test_sustained_motion_still_dismisses(void) {
+  g_test = "sustained_motion_still_dismisses";
+  cm_config cfg = test_cfg();
+  cfg.enabled[CM_DET_NONMOTION] = 0;
+  cfg.enabled[CM_DET_NOTWORN] = 0;
+  cfg.enabled[CM_DET_CHECKIN] = 0;
+  setup(&cfg);
+  warmup();
+  log_reset();
+
+  int secs = 0;
+  while (count_type(CM_ACT_CHECKIN_START) == 0 && secs < 400) { sec_still(); secs++; }
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 1);
+  log_reset();
+  sec_moving(); sec_moving();                        /* two seconds: not yet */
+  CHECK(count_type(CM_ACT_ALERT_CANCELLED) == 0);
+  sec_moving();                                      /* third second: wearer */
+  const cm_action *cc = find_type(CM_ACT_ALERT_CANCELLED);
+  CHECK(cc != 0);
+  CHECK(cc && cc->reason == CM_CANCEL_MOTION);
+  CHECK(cm_current_stage(&core) == CM_STAGE_NONE);
+
+  /* bumps during a hunt do not stand it down; sustained motion does.
+   * Re-establish a live wrist first (clears the post-cancel snooze and
+   * the worn-recently grace), then let the pulse stop again. */
+  /* 60 s of live readings: the dismissal motion is then outside the
+   * removal window of the last value change, so the ladder (not the
+   * nag) owns the next loss. */
+  for (int i = 0; i < 60; i++) sec_still_hr((uint16_t)(70 + (i & 1)));
+  log_reset();
+  secs = 0;
+  while (count_type(CM_ACT_HR_BURST_ON) == 0 && secs < 300) { sec_still(); secs++; }
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 1);
+  sec_moving(); sec_still(); sec_still();
+  CHECK(count_type(CM_ACT_HR_BURST_OFF) == 0);      /* bump ignored */
+  sec_moving(); sec_moving(); sec_moving();
+  CHECK(count_type(CM_ACT_HR_BURST_OFF) == 1);      /* wearer: stand down */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+}
+
 int main(void) {
   test_defaults();
   test_impact_full_ladder();
@@ -1078,6 +1156,8 @@ int main(void) {
   test_hr_unavailable_hardware();
   test_manual_resume_by_select();
   test_sleeping_flat_bpm_hunts_before_nag();
+  test_bumps_do_not_dismiss_pulse_ladder();
+  test_sustained_motion_still_dismisses();
 
   printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;

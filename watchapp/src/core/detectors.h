@@ -200,6 +200,9 @@ typedef struct {
   uint32_t pulse_snooze_until_ms;
   uint32_t notworn_hunt_next_ms;  /* no new not-worn hunt before this: a
                                      confirming hunt buys quiet time */
+  uint32_t motion_win_start_ms;   /* sustained-motion window start */
+  uint32_t last_sustained_ms;     /* last SUSTAINED motion: jerk in several
+                                     distinct seconds, not a single bump */
 
   /* impact tracking */
   uint32_t freefall_ms;
@@ -231,6 +234,7 @@ typedef struct {
   uint8_t  ever_pulse;
   uint8_t  pulse_phase;          /* 0 idle, 1 hunting */
   uint8_t  hunt_purpose;         /* 0 pulse ladder, 1 not-worn arbiter */
+  uint8_t  motion_win_secs;      /* motion-seconds seen in the current window */
   uint8_t  pulse_snoozed;
   uint8_t  impact_phase;         /* 0 none, 1 freefall seen, 2 awaiting immobility */
   uint8_t  stage;                /* cm_stage */

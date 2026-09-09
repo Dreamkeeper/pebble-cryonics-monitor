@@ -22,7 +22,12 @@ a jerk above motion_jerk_mg in at least three distinct seconds within
 a ten-second window. A single jerk is a bump — a desk in use, a bed
 partner turning, a vehicle — and SHALL NOT dismiss a check-in (field
 2026-09-09: a desk bump cancelled a pulse-loss CHECKIN one second
-after it started).
+after it started). The watch's OWN vibration SHALL never count as
+motion: samples flagged as taken during the motor run are discarded,
+and jerks within 1.5 s after such a sample are ignored as the case
+ringing on a hard surface (field 2026-09-09 12:33: an impact CHECKIN's
+own buzzes at 0, 5 and 10 s counted as sustained motion and cancelled
+it).
 
 #### Scenario: Motion dismisses a check-in
 - **WHEN** a pulse-loss, impact, or non-motion alert is in CHECKIN stage
@@ -36,6 +41,12 @@ after it started).
   being bumped)
 - **THEN** the check-in continues to COUNTDOWN and ALARM unless a
   button press or a changed pulse value cancels it
+
+#### Scenario: A check-in survives its own buzzes on a hard surface
+- **WHEN** a CHECKIN vibrates every 5 s while the watch lies on a hard
+  surface that rings after each buzz
+- **THEN** the aftershocks are not motion, the check-in is not
+  cancelled, and COUNTDOWN follows
 
 #### Scenario: Motion does NOT dismiss a countdown
 - **WHEN** any alert has advanced to COUNTDOWN stage
@@ -130,13 +141,22 @@ freefall_window_ms (default 1500), and (b) single shocks > crash_above_mg
 (default 3800). After a candidate impact, a settle window
 (impact_settle_s, default 5 s) is ignored, then an immobility window
 (impact_immobile_s, default 60 s) must pass with no motion before CHECKIN
-starts. Samples flagged did_vibrate SHALL be discarded. All thresholds
-are user-configurable; defaults derive from OpenSeizureDetector and are
-subject to field-trial tuning.
+starts. Samples flagged did_vibrate SHALL be discarded, and no
+freefall, impact or shock SHALL be recognised within 1.5 s after such a
+sample (the case ringing after our own vibration). On HR hardware that
+has ever seen a pulse, an impact with no valid reading between the
+shock and the end of the immobility window SHALL be discarded silently:
+the watch is not on a readable wrist (a set-down on a desk registers as
+a shock, field 2026-09-09) and the pulse ladder and not-worn nag own
+what follows; a fallen wearer keeps producing readings at the idle
+cadence through that window. All thresholds are user-configurable;
+defaults derive from OpenSeizureDetector and are subject to field-trial
+tuning.
 
 #### Scenario: Fall followed by immobility alarms with the fast fuse
 - **WHEN** freefall→impact is detected and no motion occurs through the
   settle + immobility window
+- **AND** the wearer's readings continue through that window
 - **THEN** CHECKIN starts with detector IMPACT
 - **AND** the COUNTDOWN uses the impact fuse (20 s)
 
@@ -144,6 +164,11 @@ subject to field-trial tuning.
 - **WHEN** freefall→impact is detected
 - **AND** motion occurs after the settle window
 - **THEN** the candidate is discarded with no user-visible alert
+
+#### Scenario: Setting the watch down is not a fall
+- **WHEN** a shock is detected and no valid reading arrives through the
+  settle + immobility window
+- **THEN** no CHECKIN starts and no alarm fires
 
 ### Requirement: Non-motion detection
 The system SHALL start CHECKIN when no micro-movement has been detected

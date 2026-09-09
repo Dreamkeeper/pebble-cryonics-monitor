@@ -109,6 +109,14 @@ void cm_init(cm_core *c, const cm_config *cfg, uint32_t now_ms) {
  * cancelled a pulse-loss CHECKIN within a second). Compile-time for the
  * same reason as the cooldown below. */
 #define CM_SUSTAIN_SECS 3
+/* Our own vibration motor: samples taken while it runs are flagged by the
+ * OS, but a watch on a hard surface keeps ringing after the motor stops
+ * and those samples are not. Field 2026-09-09: the check-in's own buzzes
+ * (every 5 s) registered as three motion-seconds within 10 s and
+ * cancelled the check-in; the day before, the first buzz's aftershock
+ * cancelled one within a second. Jerks this long after a flagged sample
+ * are not motion for any detector. */
+#define CM_VIBE_GUARD_MS 1500u
 #define CM_SUSTAIN_WINDOW_MS 10000u
 
 /* Quiet time after a not-worn hunt confirmed a live wrist (see
@@ -256,12 +264,17 @@ static CM_NOINLINE void begin_detector_hold(cm_core *c) {
 void cm_accel_feed(cm_core *c, const cm_accel_sample *s, uint32_t n, uint32_t now_ms) {
   c->now_ms = now_ms;
   for (uint32_t i = 0; i < n; i++) {
-    if (s[i].did_vibrate) { c->have_prev_mag = 0; continue; }
+    if (s[i].did_vibrate) {
+      c->have_prev_mag = 0;
+      c->vibe_guard_until_ms = now_ms + CM_VIBE_GUARD_MS;
+      continue;
+    }
+    int ringing = (int32_t)(c->vibe_guard_until_ms - now_ms) > 0;
     uint32_t m2 = mag2_of(&s[i]);
     uint16_t mag = isqrt32(m2);
 
     /* movement = magnitude jerk between consecutive samples */
-    if (c->have_prev_mag) {
+    if (c->have_prev_mag && !ringing) {
       uint16_t d = (mag > c->prev_mag) ? (uint16_t)(mag - c->prev_mag)
                                        : (uint16_t)(c->prev_mag - mag);
       if (d >= c->cfg.motion_jerk_mg) note_motion(c);
@@ -269,6 +282,7 @@ void cm_accel_feed(cm_core *c, const cm_accel_sample *s, uint32_t n, uint32_t no
     c->prev_mag = mag;
     c->have_prev_mag = 1;
 
+    if (ringing) continue; /* nor is the ringing a fall or a shock */
     if (c->suspended || !c->cfg.enabled[CM_DET_IMPACT]) continue;
     if (c->stage != CM_STAGE_NONE) continue;
 
@@ -476,6 +490,14 @@ static void tick_impact(cm_core *c) {
   }
   if (elapsed(c->now_ms, settle_end) >= (uint32_t)c->cfg.impact_immobile_s * 1000u) {
     c->impact_phase = 0;
+    /* Not one valid reading since the shock (HR hardware, previously
+     * worn): the watch is off the wrist — a set-down on a desk registers
+     * as a shock (field 2026-09-09) — or the sensor lost contact, and
+     * either way the pulse ladder / not-worn nag own what follows. A
+     * fallen WEARER keeps producing readings through the immobility
+     * window (the idle cadence is 60 s). */
+    if (c->cfg.hr_available && c->ever_pulse &&
+        (int32_t)(c->last_pulse_ms - c->impact_ms) < 0) return;
     start_checkin_stage(c, CM_DET_IMPACT);
   }
 }

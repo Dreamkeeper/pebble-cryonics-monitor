@@ -201,6 +201,7 @@ typedef struct {
   uint32_t notworn_hunt_next_ms;  /* no new not-worn hunt before this: a
                                      confirming hunt buys quiet time */
   uint32_t motion_win_start_ms;   /* sustained-motion window start */
+  uint32_t vibe_guard_until_ms;   /* own vibration: jerks ignored until then */
   uint32_t last_sustained_ms;     /* last SUSTAINED motion: jerk in several
                                      distinct seconds, not a single bump */
 

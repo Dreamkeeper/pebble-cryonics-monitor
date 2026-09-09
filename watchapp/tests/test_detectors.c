@@ -96,6 +96,25 @@ static void sec_moving_hr(uint16_t bpm) {
   drain();
 }
 
+/* still, worn: a fallen wearer keeps producing (jittering) readings */
+static void secs_still_worn(int seconds) {
+  for (int i = 0; i < seconds; i++) sec_still_hr((uint16_t)(70 + (i & 1)));
+}
+
+/* one second in which our own vibration motor ran (flagged samples) and
+ * the case then rang on a hard surface (an unflagged jerk) */
+static void sec_buzz_aftershock(void) {
+  cm_accel_sample s[25];
+  for (int i = 0; i < 25; i++) {
+    s[i].x = 0; s[i].y = 0; s[i].z = -1000; s[i].did_vibrate = (i < 10) ? 1 : 0;
+  }
+  s[12].z = -1400; /* ringing: jerk 400 mg > threshold, motor already off */
+  now_ms += 1000;
+  cm_accel_feed(&core, s, 25, now_ms);
+  cm_tick(&core, now_ms, sim_hour);
+  drain();
+}
+
 static void mins_still(int minutes) { for (int i = 0; i < minutes * 60; i++) sec_still(); }
 static void secs_still(int seconds) { for (int i = 0; i < seconds; i++) sec_still(); }
 
@@ -177,8 +196,8 @@ static void test_impact_full_ladder(void) {
   event_fall();
   CHECK(count_type(CM_ACT_CHECKIN_START) == 0); /* nothing yet: immobility gate */
 
-  /* settle (5 s) + immobility window (60 s) while lying still */
-  secs_still(66);
+  /* settle (5 s) + immobility window (60 s) while lying still, worn */
+  secs_still_worn(66);
   const cm_action *ci = find_type(CM_ACT_CHECKIN_START);
   CHECK(ci != 0);
   CHECK(ci && ci->detector == CM_DET_IMPACT);
@@ -238,7 +257,7 @@ static void test_impact_checkin_motion_dismiss(void) {
   warmup();
 
   event_fall();
-  secs_still(66);
+  secs_still_worn(66);
   CHECK(count_type(CM_ACT_CHECKIN_START) == 1);
   log_reset();
 
@@ -1120,6 +1139,58 @@ static void test_sustained_motion_still_dismisses(void) {
   CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
 }
 
+
+/* Field 2026-09-09 12:33: impact CHECKIN on a desk cancelled itself at
+ * the third buzz — the case ringing after each 5 s vibration counted as
+ * a motion-second. Own vibration (and its aftershock) is never motion. */
+static void test_own_vibration_is_not_motion(void) {
+  g_test = "own_vibration_is_not_motion";
+  cm_config cfg = test_cfg();
+  cfg.enabled[CM_DET_PULSE] = 0;
+  cfg.enabled[CM_DET_NOTWORN] = 0;
+  setup(&cfg);
+  warmup();
+  secs_still(30);
+  uint32_t before = core.last_motion_ms;
+  sec_buzz_aftershock();
+  CHECK(core.last_motion_ms == before);           /* ringing ignored */
+  sec_moving();                                    /* 1 s later: still guarded */
+  CHECK(core.last_motion_ms == before);
+  sec_still();
+  sec_moving();                                    /* 3 s later: real motion */
+  CHECK(core.last_motion_ms != before);
+
+  /* an impact CHECKIN survives its own buzzes on a hard desk */
+  log_reset();
+  event_fall();
+  secs_still_worn(66);
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 1);
+  log_reset();
+  for (int i = 0; i < 31; i++) {
+    if (i % 5 == 0) sec_buzz_aftershock(); else sec_still_hr((uint16_t)(70 + (i & 1)));
+  }
+  CHECK(count_type(CM_ACT_ALERT_CANCELLED) == 0);
+  CHECK(count_type(CM_ACT_COUNTDOWN_START) == 1);
+}
+
+/* Setting a watch down on a desk reads as a shock; with no reading since
+ * the shock it is not a fall — the not-worn path owns it. */
+static void test_impact_on_unworn_watch_is_silent(void) {
+  g_test = "impact_on_unworn_watch_is_silent";
+  cm_config cfg = test_cfg();
+  cfg.enabled[CM_DET_PULSE] = 0;
+  cfg.enabled[CM_DET_NOTWORN] = 0;
+  cfg.enabled[CM_DET_NONMOTION] = 0;
+  setup(&cfg);
+  warmup();
+  log_reset();
+  for (int i = 0; i < 3; i++) sec_moving();       /* handling */
+  event_fall();                                    /* set down: shock */
+  secs_still(66);                                  /* no readings: off wrist */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_ALARM) == 0);
+}
+
 int main(void) {
   test_defaults();
   test_impact_full_ladder();
@@ -1158,6 +1229,8 @@ int main(void) {
   test_sleeping_flat_bpm_hunts_before_nag();
   test_bumps_do_not_dismiss_pulse_ladder();
   test_sustained_motion_still_dismisses();
+  test_own_vibration_is_not_motion();
+  test_impact_on_unworn_watch_is_silent();
 
   printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;

@@ -66,6 +66,7 @@ recovery). The wearer's cost is ~2 minutes a day.
 | Watch-outage drill | detect ≤ 90 s, reconnect ≤ 120 s from power-on |
 | Server-fails | transient only (no all-day gaps); dashboard trail has no unexplained holes |
 | Worker faults | 0 (or each one self-healed within 10 min) |
+| Not-worn / sensor nags (`notworn-nags`, `sensor-faults`) | each one explained (watch really off, or sensor really dead); a nag on a worn wrist = false positive, file the log window (`tools/worker_log_timeline.py`) |
 | Watch battery (S6 card) | ≥ 7 projected days → GO |
 
 Failing a gate = file the context (Soak report + log ring share),
@@ -73,6 +74,13 @@ fix, reset counters, restart the week. A clean week closes the soak
 and is the release evidence for "runs unattended".
 
 ## Known issues under observation
+
+- **Post-mortem without ADB (2026-09-09).** Debug -> View logs -> Share
+  exports the companion's daily files; `python tools/worker_log_timeline.py
+  cm-YYYYMMDD.log` rebuilds the watch's true per-minute timeline (record
+  time = log time - flush latency), lists nags/hunts/gated readings and
+  prints a window around each nag. This is how the 02:05 sleeping
+  "Not worn?" was traced to three identical 60 s samples.
 
 - **Xiaomi Second Space = monitoring blind window (owner, 2026-08-29).**
   Switching to Second Space freezes main-space apps: the companion

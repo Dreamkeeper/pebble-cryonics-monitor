@@ -198,6 +198,8 @@ typedef struct {
   uint32_t last_bpm_change_ms;    /* last value CHANGE (liveness evidence) */
   uint32_t hunt_start_ms;
   uint32_t pulse_snooze_until_ms;
+  uint32_t notworn_hunt_next_ms;  /* no new not-worn hunt before this: a
+                                     confirming hunt buys quiet time */
 
   /* impact tracking */
   uint32_t freefall_ms;
@@ -228,6 +230,7 @@ typedef struct {
   uint8_t  motion_this_second;
   uint8_t  ever_pulse;
   uint8_t  pulse_phase;          /* 0 idle, 1 hunting */
+  uint8_t  hunt_purpose;         /* 0 pulse ladder, 1 not-worn arbiter */
   uint8_t  pulse_snoozed;
   uint8_t  impact_phase;         /* 0 none, 1 freefall seen, 2 awaiting immobility */
   uint8_t  stage;                /* cm_stage */

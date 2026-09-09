@@ -101,6 +101,11 @@ void cm_init(cm_core *c, const cm_config *cfg, uint32_t now_ms) {
   c->nonmotion_armed = 1;
 }
 
+/* Quiet time after a not-worn hunt confirmed a live wrist (see
+ * tick_notworn). Compile-time on purpose: cm_config is persisted and
+ * pushed by the phone with a strict size check. */
+#define CM_NOTWORN_HUNT_COOLDOWN_MS (10u * 60000u)
+
 /* ---- integer sqrt (for accel magnitude) ---- */
 static uint16_t isqrt32(uint32_t v) {
   uint32_t r = 0, bit = 1uL << 30;
@@ -125,6 +130,7 @@ static int pulse_alert_active(const cm_core *c) {
 static void end_pulse_machinery(cm_core *c) {
   if (c->pulse_phase == 1 || pulse_alert_active(c)) emit(c, CM_ACT_HR_BURST_OFF, CM_DET_PULSE, 0, 0);
   c->pulse_phase = 0;
+  c->hunt_purpose = 0;
 }
 
 static CM_NOINLINE void schedule_next_checkin(cm_core *c) {
@@ -222,6 +228,7 @@ static CM_NOINLINE void begin_detector_hold(cm_core *c) {
   }
   c->impact_phase = 0;
   c->pulse_phase = 0;
+  c->hunt_purpose = 0;
 }
 
 void cm_accel_feed(cm_core *c, const cm_accel_sample *s, uint32_t n, uint32_t now_ms) {
@@ -283,6 +290,12 @@ void cm_hr_feed(cm_core *c, uint16_t bpm, uint32_t now_ms) {
     c->pulse_snoozed = 0;
     c->notworn_nagged = 0;
     c->sensor_nagged = 0;
+    if (c->pulse_phase == 1 && c->hunt_purpose == 1) {
+      /* The 1 Hz arbiter saw a live wrist: buy quiet time before the
+       * next not-worn hunt so a steady sleeper is not re-hunted every
+       * few minutes (field 2026-09-09). */
+      c->notworn_hunt_next_ms = now_ms + CM_NOTWORN_HUNT_COOLDOWN_MS;
+    }
     if (c->pulse_phase == 1) end_pulse_machinery(c);
     if (c->stage == CM_STAGE_CHECKIN && c->stage_det == CM_DET_PULSE) {
       cancel_alert(c, CM_CANCEL_PULSE);
@@ -405,7 +418,7 @@ static void tick_pulse(cm_core *c) {
       c->hunt_start_ms = c->now_ms;
       emit(c, CM_ACT_HR_BURST_ON, CM_DET_PULSE, 0, c->cfg.pulse_hunt_s);
     }
-  } else if (c->pulse_phase == 1) {
+  } else if (c->pulse_phase == 1 && c->hunt_purpose == 0) {
     if (elapsed(c->now_ms, c->hunt_start_ms) >= (uint32_t)c->cfg.pulse_hunt_s * 1000u) {
       /* hunted, still nothing: escalate (burst stays on so a returning
        * pulse can still auto-dismiss the CHECKIN stage) */
@@ -488,15 +501,32 @@ static void tick_notworn(cm_core *c) {
    * episode; motion or a live pulse re-arms it. */
   if (!c->cfg.enabled[CM_DET_NOTWORN] || !c->cfg.hr_available) return;
   if (c->suspended || c->notworn_nagged || c->stage != CM_STAGE_NONE) return;
-  if (c->pulse_phase != 0) return; /* a pulse hunt is running: let it conclude */
+  if (c->pulse_phase == 1) {
+    if (c->hunt_purpose != 1) return; /* ladder hunt: let it conclude */
+    if (elapsed(c->now_ms, c->hunt_start_ms) >= (uint32_t)c->cfg.pulse_hunt_s * 1000u) {
+      /* Hunted at 1 Hz and the feed stayed flat or absent: off-wrist. */
+      end_pulse_machinery(c);
+      c->notworn_nagged = 1;
+      emit(c, CM_ACT_NOTWORN_NAG, CM_DET_NOTWORN, 0, 0);
+    }
+    return;
+  }
 
   /* Off-wrist evidence = no LIVE pulse (frozen readings do not count —
-   * S4) and no motion for the threshold. */
+   * S4) and no motion for the threshold. At the 60 s idle cadence that
+   * evidence is ambiguous: a sleeping wearer's steady bpm repeated three
+   * times too (field 2026-09-09: 67/67/67, 16 min still, nag at 02:05).
+   * So arbitrate with the same 1 Hz hunt the ladder uses — a live wrist
+   * changes within seconds and re-arms silently; a nightstand stays
+   * flat and gets its nag 45 s later than before. */
   uint32_t th = (uint32_t)c->cfg.notworn_after_min * 60000u;
   if (elapsed(c->now_ms, c->last_bpm_change_ms) >= th &&
       elapsed(c->now_ms, c->last_motion_ms) >= th) {
-    c->notworn_nagged = 1;
-    emit(c, CM_ACT_NOTWORN_NAG, CM_DET_NOTWORN, 0, 0);
+    if ((int32_t)(c->notworn_hunt_next_ms - c->now_ms) > 0) return; /* confirmed alive recently */
+    c->pulse_phase = 1;
+    c->hunt_purpose = 1;
+    c->hunt_start_ms = c->now_ms;
+    emit(c, CM_ACT_HR_BURST_ON, CM_DET_NOTWORN, 0, c->cfg.pulse_hunt_s);
   }
 }
 

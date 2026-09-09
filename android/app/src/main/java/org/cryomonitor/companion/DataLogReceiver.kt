@@ -90,7 +90,10 @@ class DataLogReceiver : BroadcastReceiver() {
             val motionAge = buf.getShort(10).toInt() and 0xFFFF
             val flags = bytes[12].toInt() and 0xFF
             " changeAge=${changeAge}s motionAge=${motionAge}s " +
-                "flags=0x%02x heap=${heap}B".format(flags)
+                "flags=0x%02x heap=${heap}B".format(flags) +
+                (if ((flags and 0x40) != 0) " GATED" else "") +
+                (if ((flags and 0x08) != 0) " NAGGED" else "") +
+                (if ((flags and 0x04) != 0) " HUNT" else "")
         } else ""
         val flushS = System.currentTimeMillis() / 1000 - epochS
         CmLog.i(TAG, "WORKER HEARTBEAT via DataLogging: stage=$stage " +

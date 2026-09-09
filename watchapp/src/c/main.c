@@ -34,6 +34,11 @@ static char s_detail_buf[64];
 /* A not-worn nag owns the screen until the wearer reacts: the stale-launch
  * guard and the periodic status poll must not wipe or dismiss it. */
 static bool s_nag_hold;
+/* A nag that nobody answers must not squat the screen all night (field
+ * 2026-09-09: 5 h open, two phone pushes a minute). The phone keeps the
+ * notification; the watch returns to the watchface after this many s. */
+static uint16_t s_nag_hold_ticks;
+#define CM_NAG_HOLD_S 180
 
 static const char *HINTS_TEXT =
     "SELECT check-in/resume\nUP suspend (hold: carry)\nDOWN hold SOS";
@@ -385,6 +390,7 @@ static void handle_action(const cm_action *a) {
       break;
     case CM_ACT_NOTWORN_NAG:
       s_nag_hold = true;
+      s_nag_hold_ticks = CM_NAG_HOLD_S;
       vibes_double_pulse();
       text_layer_set_text(s_status_layer, "Not worn?");
       text_layer_set_text(s_detail_layer, "Re-wear the watch,\nor UP to suspend");
@@ -392,6 +398,7 @@ static void handle_action(const cm_action *a) {
       break;
     case CM_ACT_SENSOR_FAULT:
       s_nag_hold = true;
+      s_nag_hold_ticks = CM_NAG_HOLD_S;
       vibes_double_pulse();
       text_layer_set_text(s_status_layer, "No pulse signal");
       text_layer_set_text(s_detail_layer,
@@ -707,6 +714,10 @@ static void main_window_unload(Window *w) {
  * with the app closed, phone-side liveness relies on DataLogging records +
  * BT connection events — documented v0.1 limitation.) */
 static void app_tick(struct tm *tick_time, TimeUnits changed) {
+  if (s_nag_hold && s_nag_hold_ticks && --s_nag_hold_ticks == 0) {
+    s_nag_hold = false; /* the auto-launch guard hands the screen back */
+    text_layer_set_text(s_detail_layer, HINTS_TEXT);
+  }
   static uint16_t s_hb_seq = 0;
   if (s_drill_hold_ticks) s_drill_hold_ticks--;
   if (s_phone_grace_ticks) s_phone_grace_ticks--;

@@ -771,8 +771,11 @@ static void test_frozen_pulse_removal_nags(void) {
   for (int i = 0; i < 4 * 60; i++) {             /* frozen feed continues */
     if (i % 2 == 0) sec_still_hr_frozen(82); else sec_still();
   }
-  CHECK(count_type(CM_ACT_HR_BURST_ON) == 0);    /* no ladder */
-  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  /* The nag now arbitrates with a silent 1 Hz hunt first (2026-09-09);
+   * a frozen feed stays flat through it, so the nag still fires - once. */
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 1);
+  CHECK(find_type(CM_ACT_HR_BURST_ON)->detector == CM_DET_NOTWORN);
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);  /* no ladder */
   CHECK(count_type(CM_ACT_ALARM) == 0);
   CHECK(count_type(CM_ACT_NOTWORN_NAG) == 1);    /* nag despite readings */
 }
@@ -978,6 +981,67 @@ static void test_manual_resume_by_select(void) {
   CHECK(cm_suspend_remaining_s(&core, now_ms) == 0);
 }
 
+
+/* Field 2026-09-09 02:05: deep sleep, 16 min without motion, raw bpm
+ * 67/67/67 at the 60 s cadence -> "Not worn?" woke the wearer. The nag
+ * must arbitrate with the 1 Hz hunt: a live wrist changes within
+ * seconds (no nag, quiet cooldown), a nightstand stays flat (nag).
+ * Sensor model: one reading per 60 s while idle; during a hunt the
+ * burst streams at 1 Hz - jittering on a wrist, frozen on a table. */
+static void sleep_seconds(int n, uint16_t base) {
+  for (int i = 0; i < n; i++) {
+    if (core.pulse_phase == 1) sec_still_hr((uint16_t)(base + (i & 1)));
+    else if (i % 60 == 0) sec_still_hr(base);
+    else sec_still();
+  }
+}
+static void nightstand_seconds(int n, uint16_t frozen) {
+  for (int i = 0; i < n; i++) {
+    if (core.pulse_phase == 1 || i % 60 == 0) sec_still_hr_frozen(frozen);
+    else sec_still();
+  }
+}
+static void test_sleeping_flat_bpm_hunts_before_nag(void) {
+  g_test = "sleeping_flat_bpm_hunts_before_nag";
+  cm_config cfg = test_cfg();
+  cfg.notworn_after_min = 3;
+  cfg.pulse_flat_after_s = 300;
+  cfg.pulse_lost_after_s = 150;        /* production: > 2x the 60 s cadence */
+  cfg.enabled[CM_DET_NONMOTION] = 0;   /* isolate the pulse/not-worn paths */
+  cfg.enabled[CM_DET_CHECKIN] = 0;
+  setup(&cfg);
+  warmup();
+  log_reset();
+
+  /* asleep, steady 67: the first thing to fire is the silent not-worn
+   * arbiter at 3 min - never the nag */
+  sleep_seconds(200, 67);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 0);
+  CHECK(count_type(CM_ACT_HR_BURST_ON) == 1);
+  CHECK(find_type(CM_ACT_HR_BURST_ON)->detector == CM_DET_NOTWORN);
+  CHECK(count_type(CM_ACT_HR_BURST_OFF) == 1);         /* jitter ended it */
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  log_reset();
+
+  /* a whole steady-sleep stretch: silent throughout, hunts bounded */
+  sleep_seconds(30 * 60, 67);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 0);
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_ALARM) == 0);
+  CHECK(count_type(CM_ACT_HR_BURST_ON) <= 10);         /* ~one per 5 min */
+  log_reset();
+
+  /* nightstand: set down (motion near the last change), then the feed
+   * freezes for real - flat even at 1 Hz -> the nag, and no ladder */
+  for (int i = 0; i < 10; i++) sec_moving();
+  nightstand_seconds(15 * 60, 69);
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 1);
+  CHECK(count_type(CM_ACT_CHECKIN_START) == 0);
+  CHECK(count_type(CM_ACT_ALARM) == 0);
+  mins_still(10);                                      /* once per episode */
+  CHECK(count_type(CM_ACT_NOTWORN_NAG) == 1);
+}
+
 int main(void) {
   test_defaults();
   test_impact_full_ladder();
@@ -1013,6 +1077,7 @@ int main(void) {
   test_manual_sos();
   test_hr_unavailable_hardware();
   test_manual_resume_by_select();
+  test_sleeping_flat_bpm_hunts_before_nag();
 
   printf("%d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;

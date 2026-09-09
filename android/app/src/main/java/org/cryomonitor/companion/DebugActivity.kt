@@ -484,7 +484,8 @@ class DebugActivity : AppCompatActivity() {
                 "self-heals=${soak.get(SoakStats.SELF_HEALS)}\n")
             append("worker: dl-records=${soak.get(SoakStats.DL_RECORDS)} " +
                 "faults=${soak.get(SoakStats.WORKER_FAULTS)} " +
-                "sensor-faults=${soak.get(SoakStats.SENSOR_FAULTS)}\n")
+                "sensor-faults=${soak.get(SoakStats.SENSOR_FAULTS)} " +
+                "notworn-nags=${soak.get(SoakStats.NOTWORN_NAGS)}\n")
             if (soak.get(SoakStats.WORKER_HEAP_LAST) > 0)
                 append("worker heap: last=${soak.get(SoakStats.WORKER_HEAP_LAST)}B " +
                     "min=${soak.get(SoakStats.WORKER_HEAP_MIN)}B " +

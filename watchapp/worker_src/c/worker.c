@@ -15,6 +15,7 @@
 
 static cm_core s_core;
 static uint8_t s_hr_burst_active;
+static uint8_t s_last_gated;   /* last HR event was zeroed by the quality gate */
 static uint16_t s_heartbeat_countdown = CM_HEARTBEAT_INTERVAL_S;
 static uint16_t s_last_bpm;            /* last raw HR reading (0 = none) */
 static uint16_t s_drill_countdown;     /* S1 latency drill: seconds to fire */
@@ -121,7 +122,8 @@ static uint8_t diag_flags(void) {
                    (s_core.pulse_phase << 2) |
                    (s_core.notworn_nagged << 3) |
                    (s_core.ever_pulse << 4) |
-                   (s_core.suspended << 5));
+                   (s_core.suspended << 5) |
+                   (s_last_gated << 6));
 }
 
 static __attribute__((noinline)) void push_status_to_app(void) {
@@ -295,6 +297,7 @@ static void accel_handler(AccelData *data, uint32_t num_samples) {
 static void health_handler(HealthEventType event, void *context) {
   if (event == HealthEventHeartRateUpdate || event == HealthEventSignificantUpdate) {
     HealthValue bpm = health_service_peek_current_value(HealthMetricHeartRateRawBPM);
+    s_last_gated = 0;
     /* Quality gate (lab 2026-08-29, n=450+): worn readings never fall
      * below Acceptable (loose strap included), while ambient-light noise
      * that fools the wear classifier is the only way a nonzero bpm can
@@ -307,6 +310,7 @@ static void health_handler(HealthEventType event, void *context) {
       if (q < 2 /* HRMQuality_Acceptable */) {
         DLOG("hr raw=%d gated: quality=%d", (int)bpm, (int)q);
         bpm = 0;
+        s_last_gated = 1;
       }
     }
     s_last_bpm = bpm > 0 ? (uint16_t)bpm : 0;

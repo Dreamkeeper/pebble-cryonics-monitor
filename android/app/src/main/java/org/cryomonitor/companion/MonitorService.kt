@@ -253,6 +253,7 @@ class MonitorService : Service(), PebbleTransport.Listener {
             }
             Protocol.PMSG_NOTWORN -> {
                 CmLog.w(TAG, "watch reports not worn")
+                soak.inc(SoakStats.NOTWORN_NAGS)
                 notifyFault("Watch appears OFF-WRIST (no pulse, no motion) " +
                     "without a suspension — monitoring is blind. Re-wear the " +
                     "watch or suspend monitoring. Contacts are NOT alerted.")
